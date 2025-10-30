@@ -7,9 +7,9 @@ __pycache__/
 *.so
 
 # Miscellaneous
-*.txt
 logs/
 *.log
+documentation/
 
 # Distribution / packaging
 .Python
