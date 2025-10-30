@@ -152,7 +152,14 @@ async def submit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         session.add(submission)
     reply = await update.message.reply_text(f"Recorded {ap} AP for {agent.codename}.")
     if settings.autodelete_enabled and reply:
-        schedule_message_deletion(queue, settings.telegram_token, reply.chat_id, reply.message_id, settings.autodelete_delay_seconds)
+        schedule_message_deletion(
+            queue,
+            settings.telegram_token,
+            reply.chat_id,
+            update.message.message_id,
+            reply.message_id,
+            settings.autodelete_delay_seconds,
+        )
 
 
 async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
