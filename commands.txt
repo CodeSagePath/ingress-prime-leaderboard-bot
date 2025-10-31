@@ -1,0 +1,4 @@
+/submit updates stored score.
+/leaderboard returns top 10 ranks.
+/myrank shows personal rank.
+/proof optionally attaches screenshot saved locally with DB path
