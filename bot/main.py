@@ -400,31 +400,236 @@ async def set_group_privacy(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 
 
-async def reset_weekly_scores(session_factory: async_sessionmaker) -> None:
+async def announce_weekly_winners(application: Application, session_factory: async_sessionmaker, week_start: datetime, week_end: datetime) -> None:
+    """Announce the weekly winners in all active group chats."""
+    logger.info(f"Starting weekly winners announcement for week {week_start} to {week_end}")
+    
+    try:
+        # Enhanced database connection error handling
+        try:
+            async with session_scope(session_factory) as session:
+                logger.debug("Database connection established for weekly winners announcement")
+                
+                # Get top performers for each faction from WeeklyStat
+                try:
+                    result = await session.execute(
+                        select(
+                            WeeklyStat.agent_id,
+                            WeeklyStat.value,
+                            WeeklyStat.faction,
+                            Agent.codename,
+                        )
+                        .join(Agent, Agent.id == WeeklyStat.agent_id)
+                        .where(WeeklyStat.week_start == week_start)
+                        .where(WeeklyStat.week_end == week_end)
+                        .where(WeeklyStat.category == "ap")
+                        .order_by(WeeklyStat.value.desc())
+                    )
+                    logger.debug("Successfully retrieved weekly stats from database")
+                except Exception as db_error:
+                    logger.error(f"Database error while fetching weekly stats: {db_error}")
+                    raise
+                
+                # Separate by faction with validation
+                enl_agents = []
+                res_agents = []
+                
+                for agent_id, value, faction, codename in result.all():
+                    # Validate WeeklyStat data
+                    if not agent_id or not faction or not codename:
+                        logger.warning(f"Invalid WeeklyStat data: agent_id={agent_id}, faction={faction}, codename={codename}")
+                        continue
+                    
+                    if value is None or value <= 0:
+                        logger.warning(f"Invalid AP value for agent {codename}: {value}")
+                        continue
+                    
+                    if faction == "ENL":
+                        enl_agents.append((codename, value))
+                        logger.debug(f"Added ENL agent: {codename} with {value} AP")
+                    elif faction == "RES":
+                        res_agents.append((codename, value))
+                        logger.debug(f"Added RES agent: {codename} with {value} AP")
+                    else:
+                        logger.warning(f"Unknown faction {faction} for agent {codename}")
+                
+                logger.info(f"Found {len(enl_agents)} ENL agents and {len(res_agents)} RES agents")
+                
+                # Get all active group chats
+                try:
+                    group_settings_result = await session.execute(select(GroupSetting))
+                    group_settings = group_settings_result.scalars().all()
+                    logger.debug(f"Retrieved {len(group_settings)} group settings")
+                except Exception as db_error:
+                    logger.error(f"Database error while fetching group settings: {db_error}")
+                    raise
+                
+                if not group_settings:
+                    logger.info("No group chats found for announcing weekly winners")
+                    return
+                
+                # Format the announcement message
+                announcement = "🏆 *Weekly Competition Results* 🏆\n\n"
+                
+                # Add ENL winners
+                if enl_agents:
+                    announcement += "*🟢 Enlightened (ENL) Top Performers:*\n"
+                    for i, (codename, ap) in enumerate(enl_agents[:3], start=1):
+                        announcement += f"{i}. {codename} - {ap:,} AP\n"
+                    announcement += "\n"
+                else:
+                    announcement += "*🟢 Enlightened (ENL):* No submissions this week\n\n"
+                
+                # Add RES winners
+                if res_agents:
+                    announcement += "*🔵 Resistance (RES) Top Performers:*\n"
+                    for i, (codename, ap) in enumerate(res_agents[:3], start=1):
+                        announcement += f"{i}. {codename} - {ap:,} AP\n"
+                    announcement += "\n"
+                else:
+                    announcement += "*🔵 Resistance (RES):* No submissions this week\n\n"
+                
+                # Add footer
+                announcement += "Scores have been reset for the new week. Good luck! 🍀"
+                
+                # Send announcement to all group chats with enhanced error handling
+                successful_sends = 0
+                failed_sends = 0
+                
+                for setting in group_settings:
+                    try:
+                        # Verify if the group chat is active before sending
+                        try:
+                            chat = await application.bot.get_chat(setting.chat_id)
+                            if chat.type not in ["group", "supergroup"]:
+                                logger.warning(f"Chat {setting.chat_id} is not a group/supergroup, skipping")
+                                continue
+                            
+                            logger.debug(f"Sending announcement to group {setting.chat_id}")
+                            await application.bot.send_message(
+                                chat_id=setting.chat_id,
+                                text=announcement,
+                                parse_mode="Markdown"
+                            )
+                            successful_sends += 1
+                            logger.info(f"Sent weekly winners announcement to group {setting.chat_id}")
+                        except RetryAfter as e:
+                            logger.warning(f"Rate limit hit for group {setting.chat_id}, retry after {e.retry_after} seconds")
+                            await asyncio.sleep(e.retry_after)
+                            # Retry once after waiting
+                            try:
+                                await application.bot.send_message(
+                                    chat_id=setting.chat_id,
+                                    text=announcement,
+                                    parse_mode="Markdown"
+                                )
+                                successful_sends += 1
+                                logger.info(f"Successfully sent weekly winners announcement to group {setting.chat_id} after retry")
+                            except TelegramError as retry_error:
+                                failed_sends += 1
+                                logger.error(f"Failed to send weekly winners announcement to group {setting.chat_id} after retry: {retry_error}")
+                        except Forbidden as e:
+                            failed_sends += 1
+                            logger.error(f"Forbidden error for group {setting.chat_id}: {e}. Bot may have been blocked or removed from the group.")
+                        except TelegramError as e:
+                            failed_sends += 1
+                            logger.error(f"Failed to send weekly winners announcement to group {setting.chat_id}: {e}")
+                    except Exception as e:
+                        failed_sends += 1
+                        logger.error(f"Unexpected error sending to group {setting.chat_id}: {e}")
+                
+                logger.info(f"Weekly winners announcement completed: {successful_sends} successful, {failed_sends} failed")
+        except Exception as db_error:
+            logger.error(f"Database connection error in announce_weekly_winners: {db_error}")
+            raise
+                    
+    except Exception as e:
+        logger.error(f"Error in announce_weekly_winners: {e}", exc_info=True)
+
+
+async def reset_weekly_scores(application: Application, session_factory: async_sessionmaker) -> None:
+    """Reset weekly scores and store them in WeeklyStat table."""
+    logger.info("Starting weekly score reset process")
+    
+    # Improved timezone handling - ensure we're using UTC consistently
     now = datetime.now(timezone.utc)
     week_end = now
     week_start = week_end - timedelta(days=7)
-    async with session_scope(session_factory) as session:
-        result = await session.execute(
-            select(Submission.agent_id, func.sum(Submission.ap), Agent.faction)
-            .join(Agent, Agent.id == Submission.agent_id)
-            .group_by(Submission.agent_id, Agent.faction)
-        )
-        for agent_id, total_ap, faction in result.all():
-            total_value = int(total_ap or 0)
-            if total_value <= 0:
-                continue
-            session.add(
-                WeeklyStat(
-                    agent_id=agent_id,
-                    category="ap",
-                    faction=faction,
-                    value=total_value,
-                    week_start=week_start,
-                    week_end=week_end,
+    
+    logger.info(f"Processing weekly stats for period {week_start} to {week_end}")
+    
+    try:
+        # Use a transaction to prevent race conditions during score reset
+        async with session_scope(session_factory) as session:
+            logger.debug("Database connection established for weekly score reset")
+            
+            try:
+                # Get all submissions grouped by agent and faction
+                result = await session.execute(
+                    select(Submission.agent_id, func.sum(Submission.ap), Agent.faction)
+                    .join(Agent, Agent.id == Submission.agent_id)
+                    .group_by(Submission.agent_id, Agent.faction)
                 )
-            )
-        await session.execute(delete(Submission))
+                logger.debug("Successfully retrieved submission data for weekly stats")
+                
+                # Process each agent's weekly stats
+                stats_created = 0
+                for agent_id, total_ap, faction in result.all():
+                    # Validate data before processing
+                    if not agent_id or not faction:
+                        logger.warning(f"Invalid data: agent_id={agent_id}, faction={faction}")
+                        continue
+                    
+                    total_value = int(total_ap or 0)
+                    if total_value <= 0:
+                        logger.debug(f"Skipping agent {agent_id} with non-positive AP: {total_value}")
+                        continue
+                    
+                    # Create WeeklyStat record
+                    try:
+                        session.add(
+                            WeeklyStat(
+                                agent_id=agent_id,
+                                category="ap",
+                                faction=faction,
+                                value=total_value,
+                                week_start=week_start,
+                                week_end=week_end,
+                            )
+                        )
+                        stats_created += 1
+                        logger.debug(f"Created weekly stat for agent {agent_id}: {total_value} AP")
+                    except Exception as e:
+                        logger.error(f"Error creating weekly stat for agent {agent_id}: {e}")
+                
+                logger.info(f"Created {stats_created} weekly stat records")
+                
+                # Delete all submissions - this is done after creating stats to prevent data loss
+                try:
+                    delete_result = await session.execute(delete(Submission))
+                    deleted_count = delete_result.rowcount
+                    logger.info(f"Deleted {deleted_count} submission records")
+                except Exception as e:
+                    logger.error(f"Error deleting submissions: {e}")
+                    raise
+                
+                # Commit the transaction
+                await session.commit()
+                logger.info("Weekly score reset transaction completed successfully")
+                
+            except Exception as db_error:
+                logger.error(f"Database error during weekly score reset: {db_error}")
+                await session.rollback()
+                raise
+        
+        # Announce weekly winners after reset is complete and transaction is committed
+        logger.info("Starting weekly winners announcement")
+        await announce_weekly_winners(application, session_factory, week_start, week_end)
+        logger.info("Weekly score reset process completed successfully")
+        
+    except Exception as e:
+        logger.error(f"Error in reset_weekly_scores: {e}", exc_info=True)
+        raise
 
 
 def configure_handlers(application: Application) -> None:
@@ -491,7 +696,7 @@ async def run() -> None:
         day_of_week="sat",
         hour=0,
         minute=0,
-        args=(session_factory,),
+        args=(application, session_factory),
         max_instances=1,
         misfire_grace_time=300,
         coalesce=True,
