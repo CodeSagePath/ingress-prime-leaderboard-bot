@@ -1,4 +1,5 @@
 import asyncio
+import asyncio
 import logging
 import re
 from datetime import datetime, timedelta, timezone
@@ -8,6 +9,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
 from redis import Redis
 from rq import Queue
+import uvicorn
 from sqlalchemy import delete, select, func
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from telegram import Update
@@ -23,6 +25,7 @@ from telegram.ext import (
 )
 
 from .config import Settings, load_settings
+from .dashboard import create_dashboard_app
 from .database import build_engine, build_session_factory, init_models, session_scope
 from .jobs import schedule_message_deletion
 from .models import Agent, GroupMessage, GroupPrivacyMode, GroupSetting, PendingAction, Submission, WeeklyStat
@@ -433,6 +436,19 @@ async def run() -> None:
     await init_models(engine)
     redis_conn = Redis.from_url(settings.redis_url)
     queue = Queue(connection=redis_conn)
+    dashboard_server: uvicorn.Server | None = None
+    dashboard_task: asyncio.Task | None = None
+    if settings.dashboard_enabled:
+        dashboard_app = create_dashboard_app(settings, session_factory)
+        config = uvicorn.Config(
+            dashboard_app,
+            host=settings.dashboard_host,
+            port=settings.dashboard_port,
+            log_level="info",
+            loop="asyncio",
+        )
+        dashboard_server = uvicorn.Server(config)
+        dashboard_task = asyncio.create_task(dashboard_server.serve())
     application = ApplicationBuilder().token(settings.telegram_token).build()
     scheduler = AsyncIOScheduler(timezone=timezone.utc)
     application.bot_data["settings"] = settings
@@ -469,9 +485,13 @@ async def run() -> None:
     try:
         await application.updater.idle()
     finally:
+        if dashboard_server is not None:
+            dashboard_server.should_exit = True
         scheduler.shutdown(wait=False)
         await application.stop()
         await application.shutdown()
+        if dashboard_task is not None:
+            await dashboard_task
         await engine.dispose()
         redis_conn.close()
 
