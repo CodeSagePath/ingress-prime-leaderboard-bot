@@ -17,6 +17,10 @@ class Settings:
     autodelete_enabled: bool
     leaderboard_size: int
     group_message_retention_minutes: int
+    dashboard_enabled: bool
+    dashboard_host: str
+    dashboard_port: int
+    dashboard_admin_token: str
 
 
 def load_settings() -> Settings:
@@ -27,6 +31,10 @@ def load_settings() -> Settings:
     autodelete_enabled = _bool(os.environ.get("AUTODELETE_ENABLED"), True)
     leaderboard_size = int(os.environ.get("LEADERBOARD_SIZE", "10"))
     group_message_retention_minutes = int(os.environ.get("GROUP_MESSAGE_RETENTION_MINUTES", "60"))
+    dashboard_enabled = _bool(os.environ.get("DASHBOARD_ENABLED"), False)
+    dashboard_host = os.environ.get("DASHBOARD_HOST", "0.0.0.0")
+    dashboard_port = int(os.environ.get("DASHBOARD_PORT", "8000"))
+    dashboard_admin_token = os.environ.get("DASHBOARD_ADMIN_TOKEN", "")
     return Settings(
         telegram_token=telegram_token,
         database_url=database_url,
@@ -35,4 +43,8 @@ def load_settings() -> Settings:
         autodelete_enabled=autodelete_enabled,
         leaderboard_size=leaderboard_size,
         group_message_retention_minutes=group_message_retention_minutes,
+        dashboard_enabled=dashboard_enabled,
+        dashboard_host=dashboard_host,
+        dashboard_port=dashboard_port,
+        dashboard_admin_token=dashboard_admin_token,
     )
