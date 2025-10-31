@@ -4,13 +4,14 @@ import subprocess
 import sys
 
 LOG_FILE = "log.txt"
-MAX_BYTES = 2_097_152  # 2MB
-BACKUP_COUNT = 5
+MAX_BYTES = 524_288  # 512KB (reduced from 2MB for better performance on old Android devices)
+BACKUP_COUNT = 2  # Reduced from 5 to minimize storage usage
 
 
 def configure_logger():
     logger = logging.getLogger("watch_bot")
-    logger.setLevel(logging.INFO)
+    # Reduce logging verbosity for better performance on old Android devices
+    logger.setLevel(logging.WARNING)
     if not logger.handlers:
         handler = RotatingFileHandler(LOG_FILE, maxBytes=MAX_BYTES, backupCount=BACKUP_COUNT)
         formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")

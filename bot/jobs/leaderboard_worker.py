@@ -106,14 +106,14 @@ async def _recompute(settings) -> None:
                     await session.execute(text("DELETE FROM leaderboard_cache"))
                 else:
                     await _persist_leaderboards(session, grouped)
-        logger.info("leaderboard cache updated", extra={"partitions": len(grouped)})
     finally:
         await engine.dispose()
 
 
 def recompute_leaderboards_job() -> None:
     load_dotenv()
-    logging.basicConfig(level=logging.INFO)
+    # Reduce logging verbosity for better performance on old Android devices
+    logging.basicConfig(level=logging.WARNING)
     settings = load_settings()
     try:
         asyncio.run(_recompute(settings))
@@ -141,7 +141,8 @@ def _create_scheduler(queue: Queue) -> BackgroundScheduler:
 
 def main() -> None:
     load_dotenv()
-    logging.basicConfig(level=logging.INFO)
+    # Reduce logging verbosity for better performance on old Android devices
+    logging.basicConfig(level=logging.WARNING)
     settings = load_settings()
     redis_conn = Redis.from_url(settings.redis_url)
     queue_name = os.environ.get("LEADERBOARD_QUEUE_NAME", "leaderboard")
