@@ -16,6 +16,7 @@ class Settings:
     autodelete_delay_seconds: int
     autodelete_enabled: bool
     leaderboard_size: int
+    group_message_retention_minutes: int
 
 
 def load_settings() -> Settings:
@@ -25,6 +26,7 @@ def load_settings() -> Settings:
     autodelete_delay_seconds = int(os.environ.get("AUTODELETE_DELAY_SECONDS", "300"))
     autodelete_enabled = _bool(os.environ.get("AUTODELETE_ENABLED"), True)
     leaderboard_size = int(os.environ.get("LEADERBOARD_SIZE", "10"))
+    group_message_retention_minutes = int(os.environ.get("GROUP_MESSAGE_RETENTION_MINUTES", "60"))
     return Settings(
         telegram_token=telegram_token,
         database_url=database_url,
@@ -32,4 +34,5 @@ def load_settings() -> Settings:
         autodelete_delay_seconds=autodelete_delay_seconds,
         autodelete_enabled=autodelete_enabled,
         leaderboard_size=leaderboard_size,
+        group_message_retention_minutes=group_message_retention_minutes,
     )
