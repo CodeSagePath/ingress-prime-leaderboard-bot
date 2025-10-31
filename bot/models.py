@@ -12,6 +12,12 @@ class Faction(str, Enum):
     res = "RES"
 
 
+class GroupPrivacyMode(str, Enum):
+    strict = "strict"
+    soft = "soft"
+    public = "public"
+
+
 class Agent(Base):
     __tablename__ = "agents"
 
@@ -31,6 +37,7 @@ class Submission(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     agent_id: Mapped[int] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True)
+    chat_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
     ap: Mapped[int] = mapped_column(Integer, nullable=False)
     metrics: Mapped[dict] = mapped_column(JSON, nullable=False)
     submitted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
@@ -47,6 +54,19 @@ class GroupMessage(Base):
     received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, index=True)
 
     __table_args__ = (UniqueConstraint("chat_id", "message_id", name="group_messages_chat_message_uc"),)
+
+
+class GroupSetting(Base):
+    __tablename__ = "group_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False, unique=True, index=True)
+    privacy_mode: Mapped[str] = mapped_column(String(16), nullable=False, default=GroupPrivacyMode.public.value)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        CheckConstraint("privacy_mode IN ('strict','soft','public')", name="group_settings_privacy_mode_check"),
+    )
 
 
 class PendingAction(Base):

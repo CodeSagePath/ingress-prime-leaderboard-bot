@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 from redis import Redis
 from rq import Queue
 from sqlalchemy import delete, select
-from sqlalchemy.ext.asyncio import async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from telegram import Update
 from telegram.error import RetryAfter, TelegramError
 from telegram.ext import (
@@ -25,7 +25,7 @@ from telegram.ext import (
 from .config import Settings, load_settings
 from .database import build_engine, build_session_factory, init_models, session_scope
 from .jobs import schedule_message_deletion
-from .models import Agent, GroupMessage, PendingAction, Submission
+from .models import Agent, GroupMessage, GroupPrivacyMode, GroupSetting, PendingAction, Submission
 from .services.leaderboard import get_leaderboard
 
 logger = logging.getLogger(__name__)
@@ -131,11 +131,21 @@ async def register_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     return ConversationHandler.END
 
 
+async def _get_or_create_group_setting(session: AsyncSession, chat_id: int) -> GroupSetting:
+    result = await session.execute(select(GroupSetting).where(GroupSetting.chat_id == chat_id))
+    setting = result.scalar_one_or_none()
+    if setting is None:
+        setting = GroupSetting(chat_id=chat_id, privacy_mode=GroupPrivacyMode.public.value)
+        session.add(setting)
+        await session.flush()
+    return setting
+
+
 async def submit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.message or not update.effective_user:
         return
     settings: Settings = context.application.bot_data["settings"]
-    queue: Queue = context.application.bot_data["queue"]
+    queue: Queue | None = context.application.bot_data.get("queue")
     text = update.message.text or ""
     _, _, payload = text.partition(" ")
     payload = payload.strip()
@@ -147,39 +157,111 @@ async def submit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     except ValueError as exc:
         await update.message.reply_text(str(exc))
         return
+    chat = getattr(update, "effective_chat", None)
+    is_group_chat = bool(chat and getattr(chat, "type", None) in {"group", "supergroup"})
+    chat_id_value = chat.id if is_group_chat else None
     session_factory = context.application.bot_data["session_factory"]
+    privacy_mode = GroupPrivacyMode.public
+    agent = None
     async with session_scope(session_factory) as session:
         result = await session.execute(select(Agent).where(Agent.telegram_id == update.effective_user.id))
         agent = result.scalar_one_or_none()
         if not agent:
             await update.message.reply_text("Register first with /register.")
             return
-        submission = Submission(agent_id=agent.id, ap=ap, metrics=metrics)
+        submission = Submission(agent_id=agent.id, chat_id=chat_id_value, ap=ap, metrics=metrics)
         session.add(submission)
+        if is_group_chat:
+            setting = await _get_or_create_group_setting(session, chat.id)
+            privacy_mode = GroupPrivacyMode(setting.privacy_mode)
     reply = await update.message.reply_text(f"Recorded {ap} AP for {agent.codename}.")
-    if settings.autodelete_enabled and reply:
-        schedule_message_deletion(
-            queue,
-            settings.telegram_token,
-            reply.chat_id,
-            update.message.message_id,
-            reply.message_id,
-            settings.autodelete_delay_seconds,
-        )
+    confirmation_message_id = getattr(reply, "message_id", None)
+    original_message_id = getattr(update.message, "message_id", None)
+    if is_group_chat and queue and chat_id_value is not None and original_message_id is not None:
+        if privacy_mode is GroupPrivacyMode.public:
+            schedule_message_deletion(
+                queue,
+                settings.telegram_token,
+                chat_id_value,
+                original_message_id,
+                confirmation_message_id,
+                settings.autodelete_delay_seconds,
+            )
+        elif privacy_mode is GroupPrivacyMode.soft:
+            schedule_message_deletion(
+                queue,
+                settings.telegram_token,
+                chat_id_value,
+                original_message_id,
+                confirmation_message_id,
+                settings.autodelete_delay_seconds,
+            )
+            schedule_message_deletion(
+                queue,
+                settings.telegram_token,
+                chat_id_value,
+                confirmation_message_id,
+                None,
+                settings.autodelete_delay_seconds,
+            )
+        elif privacy_mode is GroupPrivacyMode.strict:
+            schedule_message_deletion(
+                queue,
+                settings.telegram_token,
+                chat_id_value,
+                original_message_id,
+                confirmation_message_id,
+                0,
+            )
+    elif not is_group_chat and queue and settings.autodelete_enabled and original_message_id is not None:
+        direct_chat_id = getattr(chat, "id", None) or getattr(update.message, "chat_id", None)
+        if direct_chat_id is not None:
+            schedule_message_deletion(
+                queue,
+                settings.telegram_token,
+                direct_chat_id,
+                original_message_id,
+                confirmation_message_id,
+                settings.autodelete_delay_seconds,
+            )
 
 
 async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.message:
         return
     settings: Settings = context.application.bot_data["settings"]
+    queue: Queue | None = context.application.bot_data.get("queue")
     session_factory = context.application.bot_data["session_factory"]
+    chat = getattr(update, "effective_chat", None)
+    is_group_chat = bool(chat and getattr(chat, "type", None) in {"group", "supergroup"})
+    chat_id_value = chat.id if is_group_chat else None
+    privacy_mode = GroupPrivacyMode.public
     async with session_scope(session_factory) as session:
-        rows = await get_leaderboard(session, settings.leaderboard_size)
+        if is_group_chat:
+            setting = await _get_or_create_group_setting(session, chat.id)
+            privacy_mode = GroupPrivacyMode(setting.privacy_mode)
+        rows = await get_leaderboard(session, settings.leaderboard_size, chat_id_value)
     if not rows:
         await update.message.reply_text("No submissions yet.")
         return
     lines = [f"{index}. {codename} [{faction}] — {total_ap:,} AP" for index, (codename, faction, total_ap) in enumerate(rows, start=1)]
-    await update.message.reply_text("\n".join(lines))
+    reply = await update.message.reply_text("\n".join(lines))
+    if is_group_chat and privacy_mode is GroupPrivacyMode.strict:
+        confirmation_message_id = getattr(reply, "message_id", None)
+        original_message_id = getattr(update.message, "message_id", None)
+        if queue and chat_id_value is not None and original_message_id is not None:
+            schedule_message_deletion(
+                queue,
+                settings.telegram_token,
+                chat_id_value,
+                original_message_id,
+                confirmation_message_id,
+                0,
+            )
+        async with session_scope(session_factory) as session:
+            await session.execute(delete(Submission).where(Submission.chat_id == chat_id_value))
+            await session.execute(delete(GroupMessage).where(GroupMessage.chat_id == chat_id_value))
+            await session.execute(delete(PendingAction).where(PendingAction.chat_id == chat_id_value))
 
 
 async def store_group_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -189,6 +271,10 @@ async def store_group_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     timestamp = message.date or datetime.now(timezone.utc)
     session_factory = context.application.bot_data["session_factory"]
     async with session_scope(session_factory) as session:
+        setting = await _get_or_create_group_setting(session, message.chat_id)
+        mode = GroupPrivacyMode(setting.privacy_mode)
+        if mode in {GroupPrivacyMode.public, GroupPrivacyMode.soft}:
+            return
         exists = await session.execute(
             select(GroupMessage.id).where(
                 GroupMessage.chat_id == message.chat_id,
@@ -204,6 +290,31 @@ async def store_group_message(update: Update, context: ContextTypes.DEFAULT_TYPE
                 received_at=timestamp,
             )
         )
+
+
+async def set_group_privacy(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message:
+        return
+    chat = getattr(update, "effective_chat", None)
+    if not chat or getattr(chat, "type", None) not in {"group", "supergroup"}:
+        await update.message.reply_text("This command can only be used in groups.")
+        return
+    args = getattr(context, "args", [])
+    if not args:
+        await update.message.reply_text("Usage: /privacy <public|soft|strict>.")
+        return
+    value = args[0].lower()
+    try:
+        mode = GroupPrivacyMode(value)
+    except ValueError:
+        options = ", ".join(sorted(mode_option.value for mode_option in GroupPrivacyMode))
+        await update.message.reply_text(f"Invalid mode. Choose from {options}.")
+        return
+    session_factory = context.application.bot_data["session_factory"]
+    async with session_scope(session_factory) as session:
+        setting = await _get_or_create_group_setting(session, chat.id)
+        setting.privacy_mode = mode.value
+    await update.message.reply_text(f"Privacy mode set to {mode.value}.")
 
 
 async def _execute_pending_deletions(application: Application, session_factory: async_sessionmaker) -> None:
@@ -235,6 +346,8 @@ async def cleanup_expired_group_messages(
     await _execute_pending_deletions(application, session_factory)
     threshold = datetime.now(timezone.utc) - timedelta(minutes=retention_minutes)
     async with session_scope(session_factory) as session:
+        settings_rows = await session.execute(select(GroupSetting))
+        group_settings = {row.chat_id: GroupPrivacyMode(row.privacy_mode) for row in settings_rows.scalars()}
         while True:
             result = await session.execute(
                 select(GroupMessage)
@@ -247,6 +360,9 @@ async def cleanup_expired_group_messages(
                 break
             ids = []
             for record in rows:
+                mode = group_settings.get(record.chat_id, GroupPrivacyMode.public)
+                if mode is GroupPrivacyMode.public:
+                    continue
                 try:
                     await application.bot.delete_message(chat_id=record.chat_id, message_id=record.message_id)
                 except RetryAfter as exc:
@@ -277,6 +393,7 @@ def configure_handlers(application: Application) -> None:
     application.add_handler(register_handler)
     application.add_handler(CommandHandler("submit", submit))
     application.add_handler(CommandHandler("leaderboard", leaderboard))
+    application.add_handler(CommandHandler("privacy", set_group_privacy))
     application.add_handler(MessageHandler(filters.ChatType.GROUPS, store_group_message))
 
 
