@@ -28,12 +28,14 @@ from .config import Settings, load_settings
 from .dashboard import create_dashboard_app
 from .database import build_engine, build_session_factory, init_models, session_scope
 from .jobs.deletion import cleanup_expired_group_messages
-from .models import Agent, GroupMessage, GroupPrivacyMode, GroupSetting, PendingAction, Submission, WeeklyStat
+from .jobs.backup import perform_backup, manual_backup_command
+from .models import Agent, GroupMessage, GroupPrivacyMode, GroupSetting, PendingAction, Submission, WeeklyStat, Verification, VerificationStatus
 from .services.leaderboard import get_leaderboard
 
 logger = logging.getLogger(__name__)
 
 CODENAME, FACTION = range(2)
+VERIFY_SUBMIT, VERIFY_SCREENSHOT = range(2)
 
 
 def parse_submission(payload: str) -> tuple[int, dict[str, Any]]:
@@ -193,12 +195,29 @@ async def submit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             # Update the existing submission
             existing_submission.ap = ap
             existing_submission.metrics = metrics
-            existing_submission.submitted_at = datetime.utcnow()
+            existing_submission.submitted_at = datetime.now(timezone.utc)
             submission = existing_submission
+            
+            # If the submission has a verification, reset it to pending
+            if existing_submission.verification:
+                existing_submission.verification.status = VerificationStatus.pending.value
+                existing_submission.verification.admin_id = None
+                existing_submission.verification.verified_at = None
+                existing_submission.verification.rejection_reason = None
         else:
             # Create a new submission
             submission = Submission(agent_id=agent.id, chat_id=chat_id_value, ap=ap, metrics=metrics)
             session.add(submission)
+            await session.flush()  # Get the submission ID
+            
+            # Create a verification record for the new submission
+            verification = Verification(
+                submission_id=submission.id,
+                screenshot_path="",  # Empty path for now, will be updated if user sends screenshot
+                status=VerificationStatus.pending.value
+            )
+            session.add(verification)
+            
         if is_group_chat:
             setting = await _get_or_create_group_setting(
                 session,
@@ -207,7 +226,12 @@ async def submit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             )
             # Store the messages for later deletion by the scheduled job
             if setting.privacy_mode != GroupPrivacyMode.public.value:
-                reply = await update.message.reply_text(f"Recorded {ap} AP for {agent.codename}.")
+                if settings.text_only_mode:
+                    # Text-only mode for better performance on old Android devices
+                    reply = await update.message.reply_text(f"Recorded {ap} AP for {agent.codename}. Use /verify to submit a screenshot for verification.")
+                else:
+                    # Normal mode with emojis
+                    reply = await update.message.reply_text(f"✅ Recorded {ap} AP for {agent.codename}. Use /verify to submit a screenshot for verification.")
                 original_message_id = getattr(update.message, "message_id", None)
                 confirmation_message_id = getattr(reply, "message_id", None)
                 
@@ -229,9 +253,19 @@ async def submit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                         )
                     )
             else:
-                await update.message.reply_text(f"Recorded {ap} AP for {agent.codename}.")
+                if settings.text_only_mode:
+                    # Text-only mode for better performance on old Android devices
+                    await update.message.reply_text(f"Recorded {ap} AP for {agent.codename}. Use /verify to submit a screenshot for verification.")
+                else:
+                    # Normal mode with emojis
+                    await update.message.reply_text(f"✅ Recorded {ap} AP for {agent.codename}. Use /verify to submit a screenshot for verification.")
         else:
-            await update.message.reply_text(f"Recorded {ap} AP for {agent.codename}.")
+            if settings.text_only_mode:
+                # Text-only mode for better performance on old Android devices
+                await update.message.reply_text(f"Recorded {ap} AP for {agent.codename}. Use /verify to submit a screenshot for verification.")
+            else:
+                # Normal mode with emojis
+                await update.message.reply_text(f"✅ Recorded {ap} AP for {agent.codename}. Use /verify to submit a screenshot for verification.")
 
 
 async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -255,8 +289,59 @@ async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if not rows:
         await update.message.reply_text("No submissions yet.")
         return
-    lines = [f"{index}. {codename} [{faction}] — {total_ap:,} AP" for index, (codename, faction, total_ap) in enumerate(rows, start=1)]
-    reply = await update.message.reply_text("\n".join(lines))
+    
+    # Get verification status for each agent
+    async with session_scope(session_factory) as session:
+        agent_verification_status = {}
+        for codename, faction, total_ap in rows:
+            result = await session.execute(
+                select(Agent.id)
+                .where(Agent.codename == codename)
+                .where(Agent.faction == faction)
+            )
+            agent = result.scalar_one_or_none()
+            
+            if agent:
+                # Check if the agent has any approved submissions
+                result = await session.execute(
+                    select(func.count(Submission.id))
+                    .join(Verification, Verification.submission_id == Submission.id)
+                    .where(Submission.agent_id == agent.id)
+                    .where(Verification.status == VerificationStatus.approved.value)
+                )
+                approved_count = result.scalar() or 0
+                
+                # Check if the agent has any pending submissions
+                result = await session.execute(
+                    select(func.count(Submission.id))
+                    .join(Verification, Verification.submission_id == Submission.id)
+                    .where(Submission.agent_id == agent.id)
+                    .where(Verification.status == VerificationStatus.pending.value)
+                )
+                pending_count = result.scalar() or 0
+                
+                # Determine verification status
+                if approved_count > 0:
+                    agent_verification_status[codename] = "✅"
+                elif pending_count > 0:
+                    agent_verification_status[codename] = "⏳"
+                else:
+                    agent_verification_status[codename] = "❌"
+    
+    if settings.text_only_mode:
+        # Text-only mode for better performance on old Android devices
+        lines = []
+        for index, (codename, faction, total_ap) in enumerate(rows, start=1):
+            status = agent_verification_status.get(codename, "")
+            lines.append(f"{index}. {codename} [{faction}] {status} - {total_ap:,} AP")
+        reply = await update.message.reply_text("\n".join(lines))
+    else:
+        # Normal mode with emojis and markdown
+        lines = []
+        for index, (codename, faction, total_ap) in enumerate(rows, start=1):
+            status = agent_verification_status.get(codename, "")
+            lines.append(f"{index}. {codename} [{faction}] {status} — {total_ap:,} AP")
+        reply = await update.message.reply_text("\n".join(lines))
     
     # In strict mode, store messages for immediate deletion and clear submissions
     if is_group_chat and privacy_mode is GroupPrivacyMode.strict:
@@ -339,8 +424,14 @@ async def myrank_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         
         # Format the response
         context_text = "in this group" if is_group_chat else "globally"
-        response = f"Your rank {context_text} is #{rank}\n"
-        response += f"{agent.codename} [{agent.faction}] — {int(agent_ap):,} AP"
+        if settings.text_only_mode:
+            # Text-only mode for better performance on old Android devices
+            response = f"Your rank {context_text} is #{rank}\n"
+            response += f"{agent.codename} [{agent.faction}] - {int(agent_ap):,} AP"
+        else:
+            # Normal mode with emojis and markdown
+            response = f"Your rank {context_text} is #{rank}\n"
+            response += f"{agent.codename} [{agent.faction}] — {int(agent_ap):,} AP"
         
         await update.message.reply_text(response)
 
@@ -400,16 +491,320 @@ async def set_group_privacy(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 
 
+async def verify_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Start the verification process by asking for submission data."""
+    if not update.message or not update.effective_user:
+        return ConversationHandler.END
+    
+    session_factory = context.application.bot_data["session_factory"]
+    async with session_scope(session_factory) as session:
+        result = await session.execute(select(Agent).where(Agent.telegram_id == update.effective_user.id))
+        agent = result.scalar_one_or_none()
+        
+        if not agent:
+            await update.message.reply_text("Register first with /register.")
+            return ConversationHandler.END
+    
+    await update.message.reply_text("Please send your submission data in the format: ap=12345; metric=678")
+    return VERIFY_SUBMIT
+
+
+async def verify_submit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Process the submission data and ask for a screenshot."""
+    if not update.message or not update.effective_user:
+        return ConversationHandler.END
+    
+    text = update.message.text or ""
+    try:
+        ap, metrics = parse_submission(text)
+    except ValueError as exc:
+        await update.message.reply_text(str(exc))
+        return VERIFY_SUBMIT
+    
+    # Store the submission data in user context for later use
+    context.user_data["verify_ap"] = ap
+    context.user_data["verify_metrics"] = metrics
+    
+    await update.message.reply_text("Now please send a screenshot as proof of your score.")
+    return VERIFY_SCREENSHOT
+
+
+async def verify_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Process the screenshot and create a verification record."""
+    if not update.message or not update.effective_user:
+        return ConversationHandler.END
+    
+    # Check if the message contains a photo
+    if not update.message.photo:
+        await update.message.reply_text("Please send a photo as a screenshot.")
+        return VERIFY_SCREENSHOT
+    
+    # Get the submission data from user context
+    ap = context.user_data.get("verify_ap")
+    metrics = context.user_data.get("verify_metrics")
+    
+    if not ap or not metrics:
+        await update.message.reply_text("Submission data not found. Please start over with /verify.")
+        return ConversationHandler.END
+    
+    # Get the highest resolution photo
+    photo = update.message.photo[-1]
+    file = await context.bot.get_file(photo.file_id)
+    
+    # Generate a unique filename for the screenshot
+    import uuid
+    screenshot_filename = f"screenshots/{uuid.uuid4()}.jpg"
+    
+    # Download the screenshot
+    import os
+    os.makedirs("screenshots", exist_ok=True)
+    await file.download_to_drive(screenshot_filename)
+    
+    # Get the agent
+    session_factory = context.application.bot_data["session_factory"]
+    chat = getattr(update, "effective_chat", None)
+    is_group_chat = bool(chat and getattr(chat, "type", None) in {"group", "supergroup"})
+    chat_id_value = chat.id if is_group_chat else None
+    
+    async with session_scope(session_factory) as session:
+        result = await session.execute(select(Agent).where(Agent.telegram_id == update.effective_user.id))
+        agent = result.scalar_one_or_none()
+        
+        if not agent:
+            await update.message.reply_text("Register first with /register.")
+            return ConversationHandler.END
+        
+        # Check if the user already has a submission for this chat
+        result = await session.execute(
+            select(Submission)
+            .where(Submission.agent_id == agent.id)
+            .where(Submission.chat_id == chat_id_value)
+            .order_by(Submission.submitted_at.desc())
+            .limit(1)
+        )
+        existing_submission = result.scalar_one_or_none()
+        
+        if existing_submission:
+            # Update the existing submission
+            existing_submission.ap = ap
+            existing_submission.metrics = metrics
+            existing_submission.submitted_at = datetime.now(timezone.utc)
+            
+            # Update or create the verification record
+            if existing_submission.verification:
+                existing_submission.verification.screenshot_path = screenshot_filename
+                existing_submission.verification.status = VerificationStatus.pending.value
+                existing_submission.verification.admin_id = None
+                existing_submission.verification.verified_at = None
+                existing_submission.verification.rejection_reason = None
+            else:
+                verification = Verification(
+                    submission_id=existing_submission.id,
+                    screenshot_path=screenshot_filename,
+                    status=VerificationStatus.pending.value
+                )
+                session.add(verification)
+        else:
+            # Create the submission
+            submission = Submission(
+                agent_id=agent.id,
+                chat_id=chat_id_value,
+                ap=ap,
+                metrics=metrics
+            )
+            session.add(submission)
+            await session.flush()  # Get the submission ID
+            
+            # Create the verification record
+            verification = Verification(
+                submission_id=submission.id,
+                screenshot_path=screenshot_filename,
+                status=VerificationStatus.pending.value
+            )
+            session.add(verification)
+    
+    # Clear user context
+    context.user_data.clear()
+    
+    await update.message.reply_text("Your submission has been received and is pending verification. You will be notified once it's reviewed.")
+    return ConversationHandler.END
+
+
+async def verify_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Cancel the verification process."""
+    if update.message:
+        await update.message.reply_text("Verification process cancelled.")
+    context.user_data.clear()
+    return ConversationHandler.END
+
+
+async def pending_verifications(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show all pending verification requests (admin only)."""
+    if not update.message or not update.effective_user:
+        return
+    
+    settings: Settings = context.application.bot_data["settings"]
+    
+    # Check if the user is an admin
+    if update.effective_user.id not in settings.admin_user_ids:
+        await update.message.reply_text("You don't have permission to use this command.")
+        return
+    
+    session_factory = context.application.bot_data["session_factory"]
+    async with session_scope(session_factory) as session:
+        # Get all pending verifications with submission and agent details
+        result = await session.execute(
+            select(Verification, Submission, Agent)
+            .join(Submission, Verification.submission_id == Submission.id)
+            .join(Agent, Submission.agent_id == Agent.id)
+            .where(Verification.status == VerificationStatus.pending.value)
+            .order_by(Verification.created_at.asc())
+        )
+        
+        pending_verifications = result.all()
+        
+        if not pending_verifications:
+            await update.message.reply_text("No pending verification requests.")
+            return
+        
+        # Format the response
+        lines = ["*Pending Verification Requests:*\n"]
+        for verification, submission, agent in pending_verifications:
+            lines.append(
+                f"ID: {verification.id}\n"
+                f"Agent: {agent.codename} [{agent.faction}]\n"
+                f"AP: {submission.ap}\n"
+                f"Submitted: {submission.submitted_at.strftime('%Y-%m-%d %H:%M')}\n"
+            )
+        
+        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+
+async def approve_verification(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Approve a verification request (admin only)."""
+    if not update.message or not update.effective_user:
+        return
+    
+    settings: Settings = context.application.bot_data["settings"]
+    
+    # Check if the user is an admin
+    if update.effective_user.id not in settings.admin_user_ids:
+        await update.message.reply_text("You don't have permission to use this command.")
+        return
+    
+    # Get the verification ID from command arguments
+    args = context.args
+    if not args or not args[0].isdigit():
+        await update.message.reply_text("Usage: /approve_verification <verification_id>")
+        return
+    
+    verification_id = int(args[0])
+    
+    session_factory = context.application.bot_data["session_factory"]
+    async with session_scope(session_factory) as session:
+        # Get the verification with submission and agent details
+        result = await session.execute(
+            select(Verification, Submission, Agent)
+            .join(Submission, Verification.submission_id == Submission.id)
+            .join(Agent, Submission.agent_id == Agent.id)
+            .where(Verification.id == verification_id)
+        )
+        
+        verification_data = result.one_or_none()
+        
+        if not verification_data:
+            await update.message.reply_text(f"Verification request with ID {verification_id} not found.")
+            return
+        
+        verification, submission, agent = verification_data
+        
+        # Update the verification status
+        verification.status = VerificationStatus.approved.value
+        verification.admin_id = update.effective_user.id
+        verification.verified_at = datetime.now(timezone.utc)
+        
+        # Notify the agent
+        try:
+            await context.bot.send_message(
+                chat_id=agent.telegram_id,
+                text=f"Your submission of {submission.ap} AP has been approved and verified!"
+            )
+        except Exception as e:
+            logger.error(f"Failed to notify agent {agent.telegram_id} about approved verification: {e}")
+        
+        await update.message.reply_text(
+            f"Verification request ID {verification_id} for {agent.codename} [{agent.faction}] with {submission.ap} AP has been approved."
+        )
+
+
+async def reject_verification(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Reject a verification request (admin only)."""
+    if not update.message or not update.effective_user:
+        return
+    
+    settings: Settings = context.application.bot_data["settings"]
+    
+    # Check if the user is an admin
+    if update.effective_user.id not in settings.admin_user_ids:
+        await update.message.reply_text("You don't have permission to use this command.")
+        return
+    
+    # Get the verification ID and reason from command arguments
+    args = context.args
+    if not args or not args[0].isdigit() or len(args) < 2:
+        await update.message.reply_text("Usage: /reject_verification <verification_id> <reason>")
+        return
+    
+    verification_id = int(args[0])
+    reason = " ".join(args[1:])
+    
+    session_factory = context.application.bot_data["session_factory"]
+    async with session_scope(session_factory) as session:
+        # Get the verification with submission and agent details
+        result = await session.execute(
+            select(Verification, Submission, Agent)
+            .join(Submission, Verification.submission_id == Submission.id)
+            .join(Agent, Submission.agent_id == Agent.id)
+            .where(Verification.id == verification_id)
+        )
+        
+        verification_data = result.one_or_none()
+        
+        if not verification_data:
+            await update.message.reply_text(f"Verification request with ID {verification_id} not found.")
+            return
+        
+        verification, submission, agent = verification_data
+        
+        # Update the verification status
+        verification.status = VerificationStatus.rejected.value
+        verification.admin_id = update.effective_user.id
+        verification.verified_at = datetime.now(timezone.utc)
+        verification.rejection_reason = reason
+        
+        # Notify the agent
+        try:
+            await context.bot.send_message(
+                chat_id=agent.telegram_id,
+                text=f"Your submission of {submission.ap} AP has been rejected. Reason: {reason}"
+            )
+        except Exception as e:
+            logger.error(f"Failed to notify agent {agent.telegram_id} about rejected verification: {e}")
+        
+        await update.message.reply_text(
+            f"Verification request ID {verification_id} for {agent.codename} [{agent.faction}] with {submission.ap} AP has been rejected."
+        )
+
+
 async def announce_weekly_winners(application: Application, session_factory: async_sessionmaker, week_start: datetime, week_end: datetime) -> None:
     """Announce the weekly winners in all active group chats."""
-    logger.info(f"Starting weekly winners announcement for week {week_start} to {week_end}")
+    # Reduced logging for better performance on old Android devices
+    logger.info("Starting weekly winners announcement")
     
     try:
         # Enhanced database connection error handling
         try:
             async with session_scope(session_factory) as session:
-                logger.debug("Database connection established for weekly winners announcement")
-                
                 # Get top performers for each faction from WeeklyStat
                 try:
                     result = await session.execute(
@@ -425,7 +820,6 @@ async def announce_weekly_winners(application: Application, session_factory: asy
                         .where(WeeklyStat.category == "ap")
                         .order_by(WeeklyStat.value.desc())
                     )
-                    logger.debug("Successfully retrieved weekly stats from database")
                 except Exception as db_error:
                     logger.error(f"Database error while fetching weekly stats: {db_error}")
                     raise
@@ -446,20 +840,15 @@ async def announce_weekly_winners(application: Application, session_factory: asy
                     
                     if faction == "ENL":
                         enl_agents.append((codename, value))
-                        logger.debug(f"Added ENL agent: {codename} with {value} AP")
                     elif faction == "RES":
                         res_agents.append((codename, value))
-                        logger.debug(f"Added RES agent: {codename} with {value} AP")
                     else:
                         logger.warning(f"Unknown faction {faction} for agent {codename}")
-                
-                logger.info(f"Found {len(enl_agents)} ENL agents and {len(res_agents)} RES agents")
                 
                 # Get all active group chats
                 try:
                     group_settings_result = await session.execute(select(GroupSetting))
                     group_settings = group_settings_result.scalars().all()
-                    logger.debug(f"Retrieved {len(group_settings)} group settings")
                 except Exception as db_error:
                     logger.error(f"Database error while fetching group settings: {db_error}")
                     raise
@@ -469,28 +858,54 @@ async def announce_weekly_winners(application: Application, session_factory: asy
                     return
                 
                 # Format the announcement message
-                announcement = "🏆 *Weekly Competition Results* 🏆\n\n"
-                
-                # Add ENL winners
-                if enl_agents:
-                    announcement += "*🟢 Enlightened (ENL) Top Performers:*\n"
-                    for i, (codename, ap) in enumerate(enl_agents[:3], start=1):
-                        announcement += f"{i}. {codename} - {ap:,} AP\n"
-                    announcement += "\n"
+                if settings.text_only_mode:
+                    # Text-only mode for better performance on old Android devices
+                    announcement = "Weekly Competition Results\n\n"
+                    
+                    # Add ENL winners
+                    if enl_agents:
+                        announcement += "Enlightened (ENL) Top Performers:\n"
+                        for i, (codename, ap) in enumerate(enl_agents[:3], start=1):
+                            announcement += f"{i}. {codename} - {ap:,} AP\n"
+                        announcement += "\n"
+                    else:
+                        announcement += "Enlightened (ENL): No submissions this week\n\n"
+                    
+                    # Add RES winners
+                    if res_agents:
+                        announcement += "Resistance (RES) Top Performers:\n"
+                        for i, (codename, ap) in enumerate(res_agents[:3], start=1):
+                            announcement += f"{i}. {codename} - {ap:,} AP\n"
+                        announcement += "\n"
+                    else:
+                        announcement += "Resistance (RES): No submissions this week\n\n"
+                    
+                    # Add footer
+                    announcement += "Scores have been reset for the new week. Good luck!"
                 else:
-                    announcement += "*🟢 Enlightened (ENL):* No submissions this week\n\n"
-                
-                # Add RES winners
-                if res_agents:
-                    announcement += "*🔵 Resistance (RES) Top Performers:*\n"
-                    for i, (codename, ap) in enumerate(res_agents[:3], start=1):
-                        announcement += f"{i}. {codename} - {ap:,} AP\n"
-                    announcement += "\n"
-                else:
-                    announcement += "*🔵 Resistance (RES):* No submissions this week\n\n"
-                
-                # Add footer
-                announcement += "Scores have been reset for the new week. Good luck! 🍀"
+                    # Normal mode with emojis and markdown
+                    announcement = "🏆 *Weekly Competition Results* 🏆\n\n"
+                    
+                    # Add ENL winners
+                    if enl_agents:
+                        announcement += "*🟢 Enlightened (ENL) Top Performers:*\n"
+                        for i, (codename, ap) in enumerate(enl_agents[:3], start=1):
+                            announcement += f"{i}. {codename} - {ap:,} AP\n"
+                        announcement += "\n"
+                    else:
+                        announcement += "*🟢 Enlightened (ENL):* No submissions this week\n\n"
+                    
+                    # Add RES winners
+                    if res_agents:
+                        announcement += "*🔵 Resistance (RES) Top Performers:*\n"
+                        for i, (codename, ap) in enumerate(res_agents[:3], start=1):
+                            announcement += f"{i}. {codename} - {ap:,} AP\n"
+                        announcement += "\n"
+                    else:
+                        announcement += "*🔵 Resistance (RES):* No submissions this week\n\n"
+                    
+                    # Add footer
+                    announcement += "Scores have been reset for the new week. Good luck! 🍀"
                 
                 # Send announcement to all group chats with enhanced error handling
                 successful_sends = 0
@@ -505,26 +920,38 @@ async def announce_weekly_winners(application: Application, session_factory: asy
                                 logger.warning(f"Chat {setting.chat_id} is not a group/supergroup, skipping")
                                 continue
                             
-                            logger.debug(f"Sending announcement to group {setting.chat_id}")
-                            await application.bot.send_message(
-                                chat_id=setting.chat_id,
-                                text=announcement,
-                                parse_mode="Markdown"
-                            )
-                            successful_sends += 1
-                            logger.info(f"Sent weekly winners announcement to group {setting.chat_id}")
-                        except RetryAfter as e:
-                            logger.warning(f"Rate limit hit for group {setting.chat_id}, retry after {e.retry_after} seconds")
-                            await asyncio.sleep(e.retry_after)
-                            # Retry once after waiting
-                            try:
+                            if settings.text_only_mode:
+                                # Text-only mode for better performance on old Android devices
+                                await application.bot.send_message(
+                                    chat_id=setting.chat_id,
+                                    text=announcement
+                                )
+                            else:
+                                # Normal mode with markdown
                                 await application.bot.send_message(
                                     chat_id=setting.chat_id,
                                     text=announcement,
                                     parse_mode="Markdown"
                                 )
+                            successful_sends += 1
+                        except RetryAfter as e:
+                            await asyncio.sleep(e.retry_after)
+                            # Retry once after waiting
+                            try:
+                                if settings.text_only_mode:
+                                    # Text-only mode for better performance on old Android devices
+                                    await application.bot.send_message(
+                                        chat_id=setting.chat_id,
+                                        text=announcement
+                                    )
+                                else:
+                                    # Normal mode with markdown
+                                    await application.bot.send_message(
+                                        chat_id=setting.chat_id,
+                                        text=announcement,
+                                        parse_mode="Markdown"
+                                    )
                                 successful_sends += 1
-                                logger.info(f"Successfully sent weekly winners announcement to group {setting.chat_id} after retry")
                             except TelegramError as retry_error:
                                 failed_sends += 1
                                 logger.error(f"Failed to send weekly winners announcement to group {setting.chat_id} after retry: {retry_error}")
@@ -556,13 +983,9 @@ async def reset_weekly_scores(application: Application, session_factory: async_s
     week_end = now
     week_start = week_end - timedelta(days=7)
     
-    logger.info(f"Processing weekly stats for period {week_start} to {week_end}")
-    
     try:
         # Use a transaction to prevent race conditions during score reset
         async with session_scope(session_factory) as session:
-            logger.debug("Database connection established for weekly score reset")
-            
             try:
                 # Get all submissions grouped by agent and faction
                 result = await session.execute(
@@ -570,7 +993,6 @@ async def reset_weekly_scores(application: Application, session_factory: async_s
                     .join(Agent, Agent.id == Submission.agent_id)
                     .group_by(Submission.agent_id, Agent.faction)
                 )
-                logger.debug("Successfully retrieved submission data for weekly stats")
                 
                 # Process each agent's weekly stats
                 stats_created = 0
@@ -582,7 +1004,6 @@ async def reset_weekly_scores(application: Application, session_factory: async_s
                     
                     total_value = int(total_ap or 0)
                     if total_value <= 0:
-                        logger.debug(f"Skipping agent {agent_id} with non-positive AP: {total_value}")
                         continue
                     
                     # Create WeeklyStat record
@@ -598,11 +1019,8 @@ async def reset_weekly_scores(application: Application, session_factory: async_s
                             )
                         )
                         stats_created += 1
-                        logger.debug(f"Created weekly stat for agent {agent_id}: {total_value} AP")
                     except Exception as e:
                         logger.error(f"Error creating weekly stat for agent {agent_id}: {e}")
-                
-                logger.info(f"Created {stats_created} weekly stat records")
                 
                 # Delete all submissions - this is done after creating stats to prevent data loss
                 try:
@@ -615,7 +1033,6 @@ async def reset_weekly_scores(application: Application, session_factory: async_s
                 
                 # Commit the transaction
                 await session.commit()
-                logger.info("Weekly score reset transaction completed successfully")
                 
             except Exception as db_error:
                 logger.error(f"Database error during weekly score reset: {db_error}")
@@ -623,7 +1040,6 @@ async def reset_weekly_scores(application: Application, session_factory: async_s
                 raise
         
         # Announce weekly winners after reset is complete and transaction is committed
-        logger.info("Starting weekly winners announcement")
         await announce_weekly_winners(application, session_factory, week_start, week_end)
         logger.info("Weekly score reset process completed successfully")
         
@@ -643,16 +1059,32 @@ def configure_handlers(application: Application) -> None:
         fallbacks=[CommandHandler("cancel", register_cancel)],
     )
     application.add_handler(register_handler)
+    
+    verify_handler = ConversationHandler(
+        entry_points=[CommandHandler("verify", verify_start)],
+        states={
+            VERIFY_SUBMIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, verify_submit)],
+            VERIFY_SCREENSHOT: [MessageHandler(filters.PHOTO, verify_screenshot)],
+        },
+        fallbacks=[CommandHandler("cancel", verify_cancel)],
+    )
+    application.add_handler(verify_handler)
+    
     application.add_handler(CommandHandler("submit", submit))
     application.add_handler(CommandHandler("leaderboard", leaderboard))
     application.add_handler(CommandHandler("myrank", myrank_command))
     application.add_handler(CommandHandler("privacy", set_group_privacy))
+    application.add_handler(CommandHandler("pending_verifications", pending_verifications))
+    application.add_handler(CommandHandler("approve_verification", approve_verification))
+    application.add_handler(CommandHandler("reject_verification", reject_verification))
+    application.add_handler(CommandHandler("backup", manual_backup_command))
     application.add_handler(MessageHandler(filters.ChatType.GROUPS, store_group_message))
 
 
 async def run() -> None:
     load_dotenv()
-    logging.basicConfig(level=logging.INFO)
+    # Reduce logging verbosity for better performance on old Android devices
+    logging.basicConfig(level=logging.WARNING)
     settings = load_settings()
     engine = build_engine(settings)
     session_factory = build_session_factory(engine)
@@ -690,17 +1122,32 @@ async def run() -> None:
         misfire_grace_time=60,
         coalesce=True,
     )
-    scheduler.add_job(
-        reset_weekly_scores,
-        trigger="cron",
-        day_of_week="sat",
-        hour=0,
-        minute=0,
-        args=(application, session_factory),
-        max_instances=1,
-        misfire_grace_time=300,
-        coalesce=True,
-    )
+    # Add backup job if enabled
+    if settings.backup_enabled:
+        # Determine trigger based on schedule
+        if settings.backup_schedule.lower() == "daily":
+            trigger = "cron"
+            trigger_args = {"hour": 2, "minute": 0}  # Run at 2 AM UTC daily
+        elif settings.backup_schedule.lower() == "weekly":
+            trigger = "cron"
+            trigger_args = {"day_of_week": "sun", "hour": 2, "minute": 0}  # Run at 2 AM UTC on Sundays
+        else:
+            # Default to daily if schedule is not recognized
+            logger.warning(f"Unknown backup schedule '{settings.backup_schedule}', defaulting to daily")
+            trigger = "cron"
+            trigger_args = {"hour": 2, "minute": 0}
+        
+        scheduler.add_job(
+            perform_backup,
+            trigger=trigger,
+            args=(settings, application),
+            max_instances=1,
+            misfire_grace_time=3600,  # 1 hour grace time
+            coalesce=True,
+            **trigger_args
+        )
+        logger.info(f"Backup job scheduled to run {settings.backup_schedule} at 2 AM UTC")
+    
     scheduler.start()
     await application.initialize()
     await application.start()

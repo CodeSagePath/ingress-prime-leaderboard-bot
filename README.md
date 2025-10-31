@@ -7,6 +7,7 @@ An unofficial leaderboard bot for Ingress Prime game that allows players to trac
 - [Setup Instructions](#setup-instructions)
 - [Environment Variables](#environment-variables)
 - [Commands](#commands)
+- [Backup Configuration](#backup-configuration)
 - [Deployment Instructions](#deployment-instructions)
 - [Troubleshooting](#troubleshooting)
 
@@ -129,6 +130,19 @@ The bot uses the following environment variables for configuration:
 | `AUTODELETE_ENABLED` | Enable automatic deletion of bot messages | `true` | `false` |
 | `AUTODELETE_DELAY_SECONDS` | Delay before deleting messages (in seconds) | `300` | `600` |
 | `GROUP_MESSAGE_RETENTION_MINUTES` | Minutes to keep group messages before cleanup | `60` | `120` |
+| `ADMIN_USER_IDS` | Comma-separated list of admin user IDs | `""` (empty) | `123456789,987654321` |
+| `TEXT_ONLY_MODE` | Disable emojis and markdown for better performance on old devices | `false` | `true` |
+
+### Backup Configuration Variables
+
+| Variable | Description | Default | Example |
+|----------|-------------|---------|---------|
+| `BACKUP_ENABLED` | Enable/disable remote backups | `false` | `true` |
+| `BACKUP_RCLONE_REMOTE` | Rclone remote name for cloud storage | `""` (empty) | `gdrive` |
+| `BACKUP_DESTINATION_PATH` | Backup destination path on remote storage | `ingress-bot-backups` | `my-bot-backups` |
+| `BACKUP_SCHEDULE` | Backup schedule (daily or weekly) | `daily` | `weekly` |
+| `BACKUP_RETENTION_COUNT` | Number of backups to retain | `7` | `14` |
+| `BACKUP_COMPRESS` | Compress backup files | `true` | `false` |
 
 ### Database Configuration
 
@@ -203,6 +217,58 @@ The bot supports the following commands:
   User: /cancel
   Bot: Registration cancelled.
   ```
+
+### `/backup` (Admin Only)
+- **Description**: Trigger a manual database backup
+- **Usage**: `/backup`
+- **Permissions**: Only available to admin users (configured with `ADMIN_USER_IDS`)
+- **Example**:
+  ```
+  User: /backup
+  Bot: Starting manual backup process...
+  Bot: ✅ Manual backup completed successfully.
+  ```
+
+## Backup Configuration
+
+The bot supports automatic database backups to cloud storage services using rclone. This feature helps protect your data by creating regular backups that can be restored if needed.
+
+For detailed instructions on setting up and configuring backups, see [BACKUP.md](BACKUP.md).
+
+### Key Features
+
+- **Automatic Scheduled Backups**: Configure daily or weekly backups
+- **Cloud Storage Support**: Works with Google Drive, Dropbox, and other rclone-supported services
+- **Compression**: Optional gzip compression to reduce storage space
+- **Retention Policy**: Automatically clean up old backups based on configurable retention
+- **Manual Backups**: Admin users can trigger manual backups using the `/backup` command
+- **Admin Notifications**: Get notified when backups succeed or fail
+
+### Quick Setup
+
+1. Install rclone on your system:
+   ```bash
+   curl https://rclone.org/install.sh | sudo bash
+   ```
+
+2. Configure rclone with your cloud storage:
+   ```bash
+   rclone config
+   ```
+
+3. Set the backup environment variables in your `.env` file:
+   ```bash
+   BACKUP_ENABLED=true
+   BACKUP_RCLONE_REMOTE=your_remote_name
+   BACKUP_DESTINATION_PATH=ingress-bot-backups
+   BACKUP_SCHEDULE=daily
+   BACKUP_RETENTION_COUNT=7
+   BACKUP_COMPRESS=true
+   ```
+
+4. Restart the bot to apply the configuration
+
+For more detailed information, troubleshooting, and advanced configuration options, please refer to the [BACKUP.md](BACKUP.md) documentation.
 
 ## Deployment Instructions
 

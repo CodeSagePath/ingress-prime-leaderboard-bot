@@ -1,5 +1,8 @@
 from dataclasses import dataclass
+import logging
 import os
+
+logger = logging.getLogger(__name__)
 
 
 def _bool(value: str | None, default: bool) -> bool:
@@ -21,6 +24,15 @@ class Settings:
     dashboard_host: str
     dashboard_port: int
     dashboard_admin_token: str
+    text_only_mode: bool
+    admin_user_ids: list[int]
+    # Backup configuration
+    backup_enabled: bool
+    backup_rclone_remote: str
+    backup_destination_path: str
+    backup_schedule: str
+    backup_retention_count: int
+    backup_compress: bool
 
 
 def load_settings() -> Settings:
@@ -35,6 +47,25 @@ def load_settings() -> Settings:
     dashboard_host = os.environ.get("DASHBOARD_HOST", "0.0.0.0")
     dashboard_port = int(os.environ.get("DASHBOARD_PORT", "8000"))
     dashboard_admin_token = os.environ.get("DASHBOARD_ADMIN_TOKEN", "")
+    text_only_mode = _bool(os.environ.get("TEXT_ONLY_MODE"), False)
+    
+    # Parse admin user IDs from environment variable
+    admin_ids_str = os.environ.get("ADMIN_USER_IDS", "")
+    admin_user_ids = []
+    if admin_ids_str:
+        try:
+            admin_user_ids = [int(id_str.strip()) for id_str in admin_ids_str.split(",")]
+        except ValueError:
+            logger.warning("Invalid ADMIN_USER_IDS format. Using empty list.")
+    
+    # Backup configuration
+    backup_enabled = _bool(os.environ.get("BACKUP_ENABLED"), False)
+    backup_rclone_remote = os.environ.get("BACKUP_RCLONE_REMOTE", "")
+    backup_destination_path = os.environ.get("BACKUP_DESTINATION_PATH", "ingress-bot-backups")
+    backup_schedule = os.environ.get("BACKUP_SCHEDULE", "daily")
+    backup_retention_count = int(os.environ.get("BACKUP_RETENTION_COUNT", "7"))
+    backup_compress = _bool(os.environ.get("BACKUP_COMPRESS"), True)
+    
     return Settings(
         telegram_token=telegram_token,
         database_url=database_url,
@@ -47,4 +78,12 @@ def load_settings() -> Settings:
         dashboard_host=dashboard_host,
         dashboard_port=dashboard_port,
         dashboard_admin_token=dashboard_admin_token,
+        text_only_mode=text_only_mode,
+        admin_user_ids=admin_user_ids,
+        backup_enabled=backup_enabled,
+        backup_rclone_remote=backup_rclone_remote,
+        backup_destination_path=backup_destination_path,
+        backup_schedule=backup_schedule,
+        backup_retention_count=backup_retention_count,
+        backup_compress=backup_compress,
     )

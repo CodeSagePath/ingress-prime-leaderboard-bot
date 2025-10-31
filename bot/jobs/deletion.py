@@ -115,10 +115,10 @@ async def execute_pending_deletions(application, session_factory: async_sessionm
                     await application.bot.delete_message(chat_id=action.chat_id, message_id=action.message_id)
                     action.executed = True
                 except TelegramError as exc:
-                    logger.warning("Failed to delete pending message %s in chat %s after retry: %s",
-                                  action.message_id, action.chat_id, exc)
+                    logger.error("Failed to delete pending message %s in chat %s after retry: %s",
+                                action.message_id, action.chat_id, exc)
             except TelegramError as exc:
-                logger.warning("Failed to delete pending message %s in chat %s: %s",
+                logger.error("Failed to delete pending message %s in chat %s: %s",
                               action.message_id, action.chat_id, exc)
         await session.flush()
 
@@ -170,12 +170,12 @@ async def cleanup_expired_group_messages(
                             await application.bot.delete_message(chat_id=record.chat_id, message_id=record.message_id)
                             deleted_ids.append(record.id)
                         except TelegramError as exc:
-                            logger.warning("Failed to delete message %s in chat %s after retry: %s",
-                                          record.message_id, record.chat_id, exc)
+                            logger.error("Failed to delete message %s in chat %s after retry: %s",
+                                        record.message_id, record.chat_id, exc)
                             # Add to pending actions for later retry
                             await _persist_pending_actions(record.chat_id, [record.message_id])
                     except TelegramError as exc:
-                        logger.warning("Failed to delete message %s in chat %s: %s",
+                        logger.error("Failed to delete message %s in chat %s: %s",
                                       record.message_id, record.chat_id, exc)
                         # Add to pending actions for later retry
                         await _persist_pending_actions(record.chat_id, [record.message_id])

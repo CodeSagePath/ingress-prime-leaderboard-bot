@@ -12,7 +12,16 @@ class Base(DeclarativeBase):
 
 
 def build_engine(settings: Settings) -> AsyncEngine:
-    return create_async_engine(settings.database_url, echo=False, future=True)
+    # Optimize for better performance on old Android devices
+    return create_async_engine(
+        settings.database_url,
+        echo=False,
+        future=True,
+        pool_size=5,  # Reduced pool size for lower memory usage
+        max_overflow=10,  # Reduced overflow for lower memory usage
+        pool_pre_ping=True,  # Check connections before use
+        pool_recycle=3600,  # Recycle connections after 1 hour
+    )
 
 
 def build_session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
