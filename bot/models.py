@@ -77,10 +77,12 @@ class GroupSetting(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False, unique=True, index=True)
     privacy_mode: Mapped[str] = mapped_column(String(16), nullable=False, default=GroupPrivacyMode.public.value)
+    retention_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=60)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
 
     __table_args__ = (
         CheckConstraint("privacy_mode IN ('strict','soft','public')", name="group_settings_privacy_mode_check"),
+        CheckConstraint("retention_minutes >= 0", name="group_settings_retention_check"),
     )
 
 
