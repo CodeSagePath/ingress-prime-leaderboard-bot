@@ -677,7 +677,7 @@ async def pending_verifications(update: Update, context: ContextTypes.DEFAULT_TY
                 f"Submitted: {submission.submitted_at.strftime('%Y-%m-%d %H:%M')}\n"
             )
         
-        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+        await update.message.reply_text("\n".join(lines), parse_mode="MarkdownV2")
 
 
 async def approve_verification(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -931,7 +931,7 @@ async def announce_weekly_winners(application: Application, session_factory: asy
                                 await application.bot.send_message(
                                     chat_id=setting.chat_id,
                                     text=announcement,
-                                    parse_mode="Markdown"
+                                    parse_mode="MarkdownV2"
                                 )
                             successful_sends += 1
                         except RetryAfter as e:
@@ -949,7 +949,7 @@ async def announce_weekly_winners(application: Application, session_factory: asy
                                     await application.bot.send_message(
                                         chat_id=setting.chat_id,
                                         text=announcement,
-                                        parse_mode="Markdown"
+                                        parse_mode="MarkdownV2"
                                     )
                                 successful_sends += 1
                             except TelegramError as retry_error:
