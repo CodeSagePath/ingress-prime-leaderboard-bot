@@ -45,6 +45,21 @@ class Submission(Base):
     agent: Mapped[Agent] = relationship(back_populates="submissions")
 
 
+class WeeklyStat(Base):
+    __tablename__ = "weekly_stats"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    agent_id: Mapped[int] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True)
+    category: Mapped[str] = mapped_column(String(32), nullable=False)
+    faction: Mapped[str] = mapped_column(String(8), nullable=False)
+    value: Mapped[int] = mapped_column(Integer, nullable=False)
+    week_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    week_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+
+    __table_args__ = (CheckConstraint("faction IN ('ENL','RES')", name="weekly_stats_faction_check"),)
+
+
 class GroupMessage(Base):
     __tablename__ = "group_messages"
 
