@@ -8,7 +8,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
 from redis import Redis
 from rq import Queue
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, func
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from telegram import Update
 from telegram.error import RetryAfter, TelegramError
@@ -25,7 +25,7 @@ from telegram.ext import (
 from .config import Settings, load_settings
 from .database import build_engine, build_session_factory, init_models, session_scope
 from .jobs import schedule_message_deletion
-from .models import Agent, GroupMessage, GroupPrivacyMode, GroupSetting, PendingAction, Submission
+from .models import Agent, GroupMessage, GroupPrivacyMode, GroupSetting, PendingAction, Submission, WeeklyStat
 from .services.leaderboard import get_leaderboard
 
 logger = logging.getLogger(__name__)
@@ -380,6 +380,33 @@ async def cleanup_expired_group_messages(
         await session.commit()
 
 
+async def reset_weekly_scores(session_factory: async_sessionmaker) -> None:
+    now = datetime.now(timezone.utc)
+    week_end = now
+    week_start = week_end - timedelta(days=7)
+    async with session_scope(session_factory) as session:
+        result = await session.execute(
+            select(Submission.agent_id, func.sum(Submission.ap), Agent.faction)
+            .join(Agent, Agent.id == Submission.agent_id)
+            .group_by(Submission.agent_id, Agent.faction)
+        )
+        for agent_id, total_ap, faction in result.all():
+            total_value = int(total_ap or 0)
+            if total_value <= 0:
+                continue
+            session.add(
+                WeeklyStat(
+                    agent_id=agent_id,
+                    category="ap",
+                    faction=faction,
+                    value=total_value,
+                    week_start=week_start,
+                    week_end=week_end,
+                )
+            )
+        await session.execute(delete(Submission))
+
+
 def configure_handlers(application: Application) -> None:
     application.add_handler(CommandHandler("start", start))
     register_handler = ConversationHandler(
@@ -422,6 +449,17 @@ async def run() -> None:
         args=(application, session_factory, settings.group_message_retention_minutes),
         max_instances=1,
         misfire_grace_time=60,
+        coalesce=True,
+    )
+    scheduler.add_job(
+        reset_weekly_scores,
+        trigger="cron",
+        day_of_week="sat",
+        hour=0,
+        minute=0,
+        args=(session_factory,),
+        max_instances=1,
+        misfire_grace_time=300,
         coalesce=True,
     )
     scheduler.start()

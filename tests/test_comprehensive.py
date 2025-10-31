@@ -816,7 +816,19 @@ class TestLeaderboardCaching:
                     value REAL NOT NULL
                 )
             """))
-            
+            await session.execute(text("""
+                CREATE TABLE IF NOT EXISTS weekly_stats (
+                    id INTEGER PRIMARY KEY,
+                    agent_id INTEGER NOT NULL,
+                    category TEXT NOT NULL,
+                    faction TEXT NOT NULL,
+                    value INTEGER NOT NULL,
+                    week_start TEXT NOT NULL,
+                    week_end TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+            """))
+
             # Insert stats data
             await session.execute(text("""
                 INSERT INTO stats (agent_id, category, faction, value) VALUES
@@ -873,7 +885,19 @@ class TestLeaderboardCaching:
                     value REAL NOT NULL
                 )
             """))
-        
+            await session.execute(text("""
+                CREATE TABLE IF NOT EXISTS weekly_stats (
+                    id INTEGER PRIMARY KEY,
+                    agent_id INTEGER NOT NULL,
+                    category TEXT NOT NULL,
+                    faction TEXT NOT NULL,
+                    value INTEGER NOT NULL,
+                    week_start TEXT NOT NULL,
+                    week_end TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+            """))
+
         # Test _collect_leaderboards
         async with session_scope(session_factory) as session:
             grouped = await _collect_leaderboards(session, 10)
@@ -967,7 +991,19 @@ class TestLeaderboardCaching:
                     value REAL NOT NULL
                 )
             """))
-            
+            await session.execute(text("""
+                CREATE TABLE IF NOT EXISTS weekly_stats (
+                    id INTEGER PRIMARY KEY,
+                    agent_id INTEGER NOT NULL,
+                    category TEXT NOT NULL,
+                    faction TEXT NOT NULL,
+                    value INTEGER NOT NULL,
+                    week_start TEXT NOT NULL,
+                    week_end TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+            """))
+
             # Create leaderboard_cache table
             await session.execute(text("""
                 CREATE TABLE IF NOT EXISTS leaderboard_cache (
