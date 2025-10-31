@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from bot.database import Base, session_scope
-from bot.main import leaderboard, parse_submission, set_group_privacy
+from bot.main import leaderboard, parse_submission, set_group_privacy, myrank_command
 from bot.models import Agent, Submission, GroupSetting
 
 
@@ -143,3 +143,87 @@ async def test_set_group_privacy_updates_mode(session_factory):
         setting_result = await session.execute(select(GroupSetting).where(GroupSetting.chat_id == 222))
         setting = setting_result.scalar_one()
         assert setting.privacy_mode == "strict"
+
+
+@pytest.mark.asyncio
+async def test_myrank_command(session_factory):
+    # Set up test data
+    async with session_scope(session_factory) as session:
+        alpha = Agent(telegram_id=1, codename="Alpha", faction="ENL")
+        beta = Agent(telegram_id=2, codename="Beta", faction="RES")
+        gamma = Agent(telegram_id=3, codename="Gamma", faction="ENL")
+        session.add_all([alpha, beta, gamma])
+        await session.flush()
+        session.add_all([
+            Submission(agent_id=alpha.id, ap=1000, metrics={}),
+            Submission(agent_id=alpha.id, ap=500, metrics={}),
+            Submission(agent_id=beta.id, ap=900, metrics={}),
+            Submission(agent_id=gamma.id, ap=2000, metrics={}),
+        ])
+
+    class DummySettings:
+        leaderboard_size = 10
+        group_message_retention_minutes = 60
+        autodelete_delay_seconds = 300
+        autodelete_enabled = True
+        telegram_token = "token"
+
+    class DummyApplication:
+        def __init__(self, bot_data):
+            self.bot_data = bot_data
+
+    class DummyContext:
+        def __init__(self, application):
+            self.application = application
+
+    class DummyUser:
+        id = 1  # Alpha's telegram_id
+
+    class DummyChat:
+        type = "private"
+
+    class DummyMessage:
+        def __init__(self):
+            self.sent = None
+            self.message_id = 77
+
+        async def reply_text(self, text):
+            self.sent = text
+            return SimpleNamespace(message_id=88)
+
+    # Test private chat (global ranking)
+    message = DummyMessage()
+    update = SimpleNamespace(
+        message=message,
+        effective_user=DummyUser(),
+        effective_chat=DummyChat()
+    )
+    application = DummyApplication({
+        "settings": DummySettings(),
+        "session_factory": session_factory,
+        "queue": object()
+    })
+    context = DummyContext(application)
+
+    await myrank_command(update, context)
+
+    # Alpha should be ranked #2 globally (Gamma: 2000, Alpha: 1500, Beta: 900)
+    assert "Your rank globally is #2" in message.sent
+    assert "Alpha [ENL] — 1,500 AP" in message.sent
+
+    # Test group chat (group-specific ranking)
+    message.sent = None
+    DummyChat.type = "group"
+    DummyChat.id = 222
+    
+    # Add a group-specific submission for Alpha
+    async with session_scope(session_factory) as session:
+        result = await session.execute(select(Agent).where(Agent.telegram_id == 1))
+        alpha = result.scalar_one()
+        session.add(Submission(agent_id=alpha.id, chat_id=222, ap=300, metrics={}))
+
+    await myrank_command(update, context)
+
+    # Alpha should be ranked #1 in the group with only 300 AP
+    assert "Your rank in this group is #1" in message.sent
+    assert "Alpha [ENL] — 300 AP" in message.sent
