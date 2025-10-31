@@ -178,8 +178,27 @@ async def submit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not agent:
             await update.message.reply_text("Register first with /register.")
             return
-        submission = Submission(agent_id=agent.id, chat_id=chat_id_value, ap=ap, metrics=metrics)
-        session.add(submission)
+        
+        # Check if the user already has a submission for this chat
+        result = await session.execute(
+            select(Submission)
+            .where(Submission.agent_id == agent.id)
+            .where(Submission.chat_id == chat_id_value)
+            .order_by(Submission.submitted_at.desc())
+            .limit(1)
+        )
+        existing_submission = result.scalar_one_or_none()
+        
+        if existing_submission:
+            # Update the existing submission
+            existing_submission.ap = ap
+            existing_submission.metrics = metrics
+            existing_submission.submitted_at = datetime.utcnow()
+            submission = existing_submission
+        else:
+            # Create a new submission
+            submission = Submission(agent_id=agent.id, chat_id=chat_id_value, ap=ap, metrics=metrics)
+            session.add(submission)
         if is_group_chat:
             setting = await _get_or_create_group_setting(
                 session,
@@ -268,6 +287,62 @@ async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             await session.execute(delete(Submission).where(Submission.chat_id == chat_id_value))
             await session.execute(delete(GroupMessage).where(GroupMessage.chat_id == chat_id_value))
             await session.execute(delete(PendingAction).where(PendingAction.chat_id == chat_id_value))
+
+
+async def myrank_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message or not update.effective_user:
+        return
+    session_factory = context.application.bot_data["session_factory"]
+    chat = getattr(update, "effective_chat", None)
+    is_group_chat = bool(chat and getattr(chat, "type", None) in {"group", "supergroup"})
+    chat_id_value = chat.id if is_group_chat else None
+    
+    # Get the agent
+    async with session_scope(session_factory) as session:
+        result = await session.execute(select(Agent).where(Agent.telegram_id == update.effective_user.id))
+        agent = result.scalar_one_or_none()
+        
+        if not agent:
+            await update.message.reply_text("Register first with /register.")
+            return
+        
+        # Get the agent's total AP
+        agent_ap_result = await session.execute(
+            select(func.sum(Submission.ap))
+            .where(Submission.agent_id == agent.id)
+            .where(Submission.chat_id == chat_id_value if is_group_chat else True)
+        )
+        agent_ap = agent_ap_result.scalar() or 0
+        
+        # Get all agents ranked by AP (for the same chat_id if in group)
+        stmt = (
+            select(Agent.id, Agent.codename, Agent.faction, func.sum(Submission.ap).label("total_ap"))
+            .join(Submission, Submission.agent_id == Agent.id)
+        )
+        if is_group_chat:
+            stmt = stmt.where(Submission.chat_id == chat_id_value)
+        stmt = stmt.group_by(Agent.id).order_by(func.sum(Submission.ap).desc())
+        
+        result = await session.execute(stmt)
+        all_agents = result.all()
+        
+        # Find the user's rank
+        rank = None
+        for i, (agent_id, codename, faction, total_ap) in enumerate(all_agents, start=1):
+            if agent_id == agent.id:
+                rank = i
+                break
+        
+        if rank is None:
+            await update.message.reply_text("You don't have any submissions yet.")
+            return
+        
+        # Format the response
+        context_text = "in this group" if is_group_chat else "globally"
+        response = f"Your rank {context_text} is #{rank}\n"
+        response += f"{agent.codename} [{agent.faction}] — {int(agent_ap):,} AP"
+        
+        await update.message.reply_text(response)
 
 
 async def store_group_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -365,6 +440,7 @@ def configure_handlers(application: Application) -> None:
     application.add_handler(register_handler)
     application.add_handler(CommandHandler("submit", submit))
     application.add_handler(CommandHandler("leaderboard", leaderboard))
+    application.add_handler(CommandHandler("myrank", myrank_command))
     application.add_handler(CommandHandler("privacy", set_group_privacy))
     application.add_handler(MessageHandler(filters.ChatType.GROUPS, store_group_message))
 

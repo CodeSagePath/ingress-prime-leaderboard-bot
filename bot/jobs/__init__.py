@@ -1,3 +1,3 @@
-from .deletion import schedule_message_deletion
+from .deletion import cleanup_expired_group_messages
 
-__all__ = ["schedule_message_deletion"]
+__all__ = ["cleanup_expired_group_messages"]
