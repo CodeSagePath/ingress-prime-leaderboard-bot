@@ -66,6 +66,7 @@ async def test_leaderboard_formats_output(session_factory):
 
     class DummySettings:
         leaderboard_size = 10
+        group_message_retention_minutes = 60
 
     class DummyApplication:
         def __init__(self, bot_data):

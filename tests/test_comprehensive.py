@@ -59,6 +59,7 @@ def mock_settings():
         autodelete_delay_seconds=300,
         autodelete_enabled=True,
         leaderboard_size=10,
+        group_message_retention_minutes=60,
     )
 
 

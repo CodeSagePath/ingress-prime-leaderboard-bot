@@ -128,6 +128,7 @@ The bot uses the following environment variables for configuration:
 | `LEADERBOARD_SIZE` | Number of agents to show on the leaderboard | `10` | `15` |
 | `AUTODELETE_ENABLED` | Enable automatic deletion of bot messages | `true` | `false` |
 | `AUTODELETE_DELAY_SECONDS` | Delay before deleting messages (in seconds) | `300` | `600` |
+| `GROUP_MESSAGE_RETENTION_MINUTES` | Minutes to keep group messages before cleanup | `60` | `120` |
 
 ### Database Configuration
 

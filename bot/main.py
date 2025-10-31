@@ -1,13 +1,17 @@
 import asyncio
 import logging
 import re
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
 from redis import Redis
 from rq import Queue
-from sqlalchemy import select
+from sqlalchemy import delete, select
+from sqlalchemy.ext.asyncio import async_sessionmaker
 from telegram import Update
+from telegram.error import TelegramError
 from telegram.ext import (
     Application,
     ApplicationBuilder,
@@ -21,7 +25,7 @@ from telegram.ext import (
 from .config import Settings, load_settings
 from .database import build_engine, build_session_factory, init_models, session_scope
 from .jobs import schedule_message_deletion
-from .models import Agent, Submission
+from .models import Agent, GroupMessage, Submission
 from .services.leaderboard import get_leaderboard
 
 CODENAME, FACTION = range(2)
@@ -176,6 +180,57 @@ async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     await update.message.reply_text("\n".join(lines))
 
 
+async def store_group_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = update.message
+    if not message or message.chat_id is None:
+        return
+    timestamp = message.date or datetime.now(timezone.utc)
+    session_factory = context.application.bot_data["session_factory"]
+    async with session_scope(session_factory) as session:
+        exists = await session.execute(
+            select(GroupMessage.id).where(
+                GroupMessage.chat_id == message.chat_id,
+                GroupMessage.message_id == message.message_id,
+            )
+        )
+        if exists.scalar_one_or_none() is not None:
+            return
+        session.add(
+            GroupMessage(
+                chat_id=message.chat_id,
+                message_id=message.message_id,
+                received_at=timestamp,
+            )
+        )
+
+
+async def cleanup_expired_group_messages(
+    application: Application,
+    session_factory: async_sessionmaker,
+    retention_minutes: int,
+) -> None:
+    threshold = datetime.now(timezone.utc) - timedelta(minutes=retention_minutes)
+    async with session_scope(session_factory) as session:
+        while True:
+            result = await session.execute(
+                select(GroupMessage)
+                .where(GroupMessage.received_at < threshold)
+                .order_by(GroupMessage.received_at)
+                .limit(200)
+            )
+            rows = result.scalars().all()
+            if not rows:
+                break
+            ids = []
+            for record in rows:
+                try:
+                    await application.bot.delete_message(chat_id=record.chat_id, message_id=record.message_id)
+                except TelegramError:
+                    pass
+                ids.append(record.id)
+            await session.execute(delete(GroupMessage).where(GroupMessage.id.in_(ids)))
+
+
 def configure_handlers(application: Application) -> None:
     application.add_handler(CommandHandler("start", start))
     register_handler = ConversationHandler(
@@ -189,6 +244,7 @@ def configure_handlers(application: Application) -> None:
     application.add_handler(register_handler)
     application.add_handler(CommandHandler("submit", submit))
     application.add_handler(CommandHandler("leaderboard", leaderboard))
+    application.add_handler(MessageHandler(filters.ChatType.GROUPS, store_group_message))
 
 
 async def run() -> None:
@@ -201,18 +257,31 @@ async def run() -> None:
     redis_conn = Redis.from_url(settings.redis_url)
     queue = Queue(connection=redis_conn)
     application = ApplicationBuilder().token(settings.telegram_token).build()
+    scheduler = AsyncIOScheduler(timezone=timezone.utc)
     application.bot_data["settings"] = settings
     application.bot_data["engine"] = engine
     application.bot_data["session_factory"] = session_factory
     application.bot_data["queue"] = queue
     application.bot_data["redis_connection"] = redis_conn
+    application.bot_data["scheduler"] = scheduler
     configure_handlers(application)
+    scheduler.add_job(
+        cleanup_expired_group_messages,
+        trigger="interval",
+        minutes=10,
+        args=(application, session_factory, settings.group_message_retention_minutes),
+        max_instances=1,
+        misfire_grace_time=60,
+        coalesce=True,
+    )
+    scheduler.start()
     await application.initialize()
     await application.start()
     await application.updater.start_polling()
     try:
         await application.updater.idle()
     finally:
+        scheduler.shutdown(wait=False)
         await application.stop()
         await application.shutdown()
         await engine.dispose()
