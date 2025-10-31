@@ -18,8 +18,9 @@ from bot.main import (
     submit,
     leaderboard,
     start,
+    set_group_privacy,
 )
-from bot.models import Agent, Submission, Faction
+from bot.models import Agent, Submission, Faction, GroupSetting
 from bot.jobs.deletion import (
     _delete_messages,
     delete_message_job,
