@@ -11,7 +11,7 @@ from rq import Queue
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 from telegram import Update
-from telegram.error import TelegramError
+from telegram.error import RetryAfter, TelegramError
 from telegram.ext import (
     Application,
     ApplicationBuilder,
@@ -25,8 +25,10 @@ from telegram.ext import (
 from .config import Settings, load_settings
 from .database import build_engine, build_session_factory, init_models, session_scope
 from .jobs import schedule_message_deletion
-from .models import Agent, GroupMessage, Submission
+from .models import Agent, GroupMessage, PendingAction, Submission
 from .services.leaderboard import get_leaderboard
+
+logger = logging.getLogger(__name__)
 
 CODENAME, FACTION = range(2)
 
@@ -204,11 +206,33 @@ async def store_group_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
 
 
+async def _execute_pending_deletions(application: Application, session_factory: async_sessionmaker) -> None:
+    async with session_scope(session_factory) as session:
+        result = await session.execute(select(PendingAction).where(PendingAction.executed.is_(False)))
+        pending = result.scalars().all()
+        if not pending:
+            return
+        for action in pending:
+            if action.action != "delete_message" or action.message_id is None:
+                continue
+            try:
+                await application.bot.delete_message(chat_id=action.chat_id, message_id=action.message_id)
+            except RetryAfter as exc:
+                delay = max(int(exc.retry_after), 1)
+                await asyncio.sleep(delay)
+                await application.bot.delete_message(chat_id=action.chat_id, message_id=action.message_id)
+            except TelegramError:
+                continue
+            action.executed = True
+        await session.flush()
+
+
 async def cleanup_expired_group_messages(
     application: Application,
     session_factory: async_sessionmaker,
     retention_minutes: int,
 ) -> None:
+    await _execute_pending_deletions(application, session_factory)
     threshold = datetime.now(timezone.utc) - timedelta(minutes=retention_minutes)
     async with session_scope(session_factory) as session:
         while True:
@@ -225,10 +249,19 @@ async def cleanup_expired_group_messages(
             for record in rows:
                 try:
                     await application.bot.delete_message(chat_id=record.chat_id, message_id=record.message_id)
+                except RetryAfter as exc:
+                    delay = max(int(exc.retry_after), 1)
+                    await asyncio.sleep(delay)
+                    try:
+                        await application.bot.delete_message(chat_id=record.chat_id, message_id=record.message_id)
+                    except TelegramError:
+                        continue
                 except TelegramError:
-                    pass
+                    continue
                 ids.append(record.id)
-            await session.execute(delete(GroupMessage).where(GroupMessage.id.in_(ids)))
+            if ids:
+                await session.execute(delete(GroupMessage).where(GroupMessage.id.in_(ids)))
+        await session.commit()
 
 
 def configure_handlers(application: Application) -> None:
