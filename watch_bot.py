@@ -4,7 +4,7 @@ import subprocess
 import sys
 
 LOG_FILE = "log.txt"
-MAX_BYTES = 1_048_576
+MAX_BYTES = 2_097_152  # 2MB
 BACKUP_COUNT = 5
 
 
@@ -21,6 +21,7 @@ def configure_logger():
 
 
 def run_bot(logger):
+    import time
     while True:
         try:
             result = subprocess.run([sys.executable, "bot.py"], check=False)
@@ -30,6 +31,9 @@ def run_bot(logger):
                 logger.error("bot.py exited with code %s, relaunching", result.returncode)
         except Exception:
             logger.exception("bot.py execution failed, relaunching")
+        
+        # Wait 2 seconds before restarting
+        time.sleep(2)
 
 
 def main():
