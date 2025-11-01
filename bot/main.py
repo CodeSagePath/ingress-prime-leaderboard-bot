@@ -1,6 +1,7 @@
 import asyncio
 import asyncio
 import logging
+import sqlite3
 import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -36,6 +37,64 @@ from .services.leaderboard import get_leaderboard
 logger = logging.getLogger(__name__)
 
 CURRENT_CYCLE_FILE = Path(__file__).resolve().parent.parent / "current_cycle.txt"
+AGENTS_DB_PATH = Path(__file__).resolve().parent / "agents.db"
+
+
+def _ensure_agents_table() -> None:
+    with sqlite3.connect(AGENTS_DB_PATH) as connection:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS agents (
+                id INTEGER PRIMARY KEY,
+                time_span TEXT,
+                agent_name TEXT,
+                agent_faction TEXT,
+                date TEXT,
+                time TEXT,
+                cycle_name TEXT,
+                cycle_points INTEGER
+            )
+            """
+        )
+        connection.commit()
+
+
+_ensure_agents_table()
+
+
+def save_to_db(parsed_data: dict) -> None:
+    cycle_points = parsed_data.get("cycle_points")
+    if cycle_points is not None:
+        try:
+            cycle_points = int(cycle_points)
+        except (TypeError, ValueError):
+            cycle_points = None
+    with sqlite3.connect(AGENTS_DB_PATH) as connection:
+        connection.execute(
+            """
+            INSERT INTO agents (
+                time_span,
+                agent_name,
+                agent_faction,
+                date,
+                time,
+                cycle_name,
+                cycle_points
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                parsed_data.get("time_span"),
+                parsed_data.get("agent_name"),
+                parsed_data.get("agent_faction"),
+                parsed_data.get("date"),
+                parsed_data.get("time"),
+                parsed_data.get("cycle_name"),
+                cycle_points,
+            ),
+        )
+        connection.commit()
+
 
 # Constants for time span aliases
 TIME_SPAN_ALIASES = {
