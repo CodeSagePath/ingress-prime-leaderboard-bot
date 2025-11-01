@@ -451,6 +451,9 @@ def parse_ingress_message(text: str) -> dict[str, Any] | list[dict[str, Any]] | 
             CURRENT_CYCLE_FILE.write_text(cycle_header, encoding="utf-8")
         except OSError:
             logger.warning("Failed to update current cycle file")
+    normalized_headers = {header: _normalize_header(header) for header in headers}
+    date_headers = [header for header, normalized in normalized_headers.items() if normalized == "date"]
+    time_headers = [header for header, normalized in normalized_headers.items() if normalized == "time"]
     results: list[dict[str, Any]] = []
     for data_line in lines[1:]:
         if not data_line:
@@ -458,15 +461,32 @@ def parse_ingress_message(text: str) -> dict[str, Any] | list[dict[str, Any]] | 
         if use_tabs:
             values = [part.strip() for part in data_line.split("\t")]
             if len(values) != len(headers):
-                return None
+                continue
             row_map = dict(zip(headers, values))
         else:
             row_map = _parse_space_separated_row(data_line, headers)
             if row_map is None:
-                return None
+                continue
+        date_value = ""
+        for header in date_headers:
+            if header in row_map:
+                date_value = (row_map.get(header) or "").strip()
+                if date_value:
+                    break
+        time_value_raw = ""
+        for header in time_headers:
+            if header in row_map:
+                time_value_raw = (row_map.get(header) or "").strip()
+                if time_value_raw:
+                    break
+        if not date_value or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_value):
+            continue
+        time_candidate = time_value_raw[:5] if time_value_raw else ""
+        if not time_candidate or not re.fullmatch(r"\d{2}:\d{2}", time_candidate):
+            continue
         normalized = _normalize_row(row_map, headers, cycle_index, cycle_header)
         if normalized is None:
-            return None
+            continue
         results.append(normalized)
     if not results:
         return None
