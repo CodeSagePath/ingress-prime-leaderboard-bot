@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
 from redis import Redis
@@ -110,6 +111,103 @@ def save_to_db(parsed_data: dict) -> bool:
         )
         connection.commit()
     return True
+
+
+async def _get_latest_cycle_name_async() -> str | None:
+    def _query() -> str | None:
+        with sqlite3.connect(AGENTS_DB_PATH) as connection:
+            row = connection.execute(
+                """
+                SELECT cycle_name
+                FROM agents
+                WHERE cycle_name IS NOT NULL AND cycle_name != ''
+                ORDER BY rowid DESC
+                LIMIT 1
+                """
+            ).fetchone()
+            return row[0] if row else None
+    return await asyncio.to_thread(_query)
+
+
+async def _fetch_cycle_leaderboard(
+    limit: int,
+    *,
+    faction: str | None = None,
+    cycle_name: str | None = None,
+    since: datetime | None = None,
+) -> list[tuple[str, str, int]]:
+    since_value = since.strftime("%Y-%m-%d %H:%M:%S") if since else None
+
+    def _query() -> list[tuple[str, str, int]]:
+        with sqlite3.connect(AGENTS_DB_PATH) as connection:
+            connection.row_factory = sqlite3.Row
+            sql = [
+                "SELECT agent_name, agent_faction, SUM(cycle_points) AS total_points",
+                "FROM agents",
+                "WHERE cycle_points IS NOT NULL",
+            ]
+            params: list[Any] = []
+            if faction:
+                sql.append("AND agent_faction = ?")
+                params.append(faction)
+            if cycle_name:
+                sql.append("AND cycle_name = ?")
+                params.append(cycle_name)
+            if since_value:
+                sql.append("AND date IS NOT NULL AND date != ''")
+                sql.append("AND time IS NOT NULL AND time != ''")
+                sql.append("AND datetime(date || ' ' || time) >= ?")
+                params.append(since_value)
+            sql.append("GROUP BY agent_name, agent_faction")
+            sql.append("ORDER BY total_points DESC, agent_name ASC")
+            sql.append("LIMIT ?")
+            params.append(limit)
+            query = " ".join(sql)
+            rows = connection.execute(query, params).fetchall()
+        results: list[tuple[str, str, int]] = []
+        for row in rows:
+            total_points = row["total_points"]
+            if total_points is None:
+                continue
+            results.append(
+                (
+                    row["agent_name"],
+                    row["agent_faction"],
+                    int(total_points),
+                )
+            )
+        return results
+
+    return await asyncio.to_thread(_query)
+
+
+def _format_cycle_leaderboard(
+    rows: list[tuple[str, str, int]],
+    header: str,
+    text_only_mode: bool,
+) -> tuple[str, dict[str, Any]]:
+    if text_only_mode:
+        lines = [header]
+        for index, (name, faction, points) in enumerate(rows, start=1):
+            lines.append(f"{index}. {name} [{faction}] - {points:,} cycle points")
+        return "\n".join(lines), {}
+    lines = [f"🏅 {header} 🏅"]
+    for index, (name, faction, points) in enumerate(rows, start=1):
+        lines.append(f"{index}. {name} [{faction}] — {points:,} cycle points")
+    return "\n".join(lines), {}
+
+
+async def _send_cycle_leaderboard(
+    update: Update,
+    settings: Settings,
+    rows: list[tuple[str, str, int]],
+    header: str,
+) -> None:
+    if not rows:
+        await update.message.reply_text("No data available.")
+        return
+    text, kwargs = _format_cycle_leaderboard(rows, header, settings.text_only_mode)
+    await update.message.reply_text(text, **kwargs)
 
 
 # Constants for time span aliases
@@ -216,6 +314,11 @@ FACTION_ALIASES = {
     "ENL": "ENL",
     "RES": "RES",
     "MACHINA": "MACHINA",
+}
+
+FACTION_DISPLAY_NAMES = {
+    "ENL": "Enlightened",
+    "RES": "Resistance",
 }
 
 CODENAME, FACTION = range(2)
@@ -1207,8 +1310,13 @@ async def myrank_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         agent_metric_result = await session.execute(
             select(func.sum(metric_field))
             .where(Submission.agent_id == agent.id)
-            .where(Submission.chat_id == chat_id_value if is_group_chat else True)
         )
+        if is_group_chat:
+            agent_metric_result = await session.execute(
+                select(func.sum(metric_field))
+                .where(Submission.agent_id == agent.id)
+                .where(Submission.chat_id == chat_id_value)
+            )
         if time_span:
             agent_metric_result = await session.execute(
                 select(func.sum(metric_field))
@@ -1266,15 +1374,62 @@ async def myrank_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 response += f"{agent.codename} [{agent.faction}] - {int(agent_metric_value):,} AP"
             else:
                 response += f"{agent.codename} [{agent.faction}] - {int(agent_metric_value):,} {metric.upper()}"
+            await update.message.reply_text(response)
+            return
+        # Normal mode with emojis and markdown
+        response = f"{context_text} is *#{rank}*\n"
+        if metric == "ap":
+            response += f"{agent.codename} [{agent.faction}] — {int(agent_metric_value):,} AP"
         else:
-            # Normal mode with emojis and markdown
-            response = f"{context_text} is *#{rank}*\n"
-            if metric == "ap":
-                response += f"{agent.codename} [{agent.faction}] — {int(agent_metric_value):,} AP"
-            else:
-                response += f"{agent.codename} [{agent.faction}] — {int(agent_metric_value):,} {metric.upper()}"
-        
+            response += f"{agent.codename} [{agent.faction}] — {int(agent_metric_value):,} {metric.upper()}"
         await update.message.reply_text(response, parse_mode="MarkdownV2")
+
+
+async def top10_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message:
+        return
+    settings: Settings = context.application.bot_data["settings"]
+    rows = await _fetch_cycle_leaderboard(10)
+    await _send_cycle_leaderboard(update, settings, rows, "Top 10 agents by cycle points")
+
+
+async def top_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message:
+        return
+    args = getattr(context, "args", [])
+    if not args:
+        await update.message.reply_text("Usage: /top <ENL|RES>.")
+        return
+    faction_arg = args[0].upper()
+    faction_code = FACTION_ALIASES.get(faction_arg, faction_arg if faction_arg in {"ENL", "RES"} else None)
+    if faction_code not in {"ENL", "RES"}:
+        await update.message.reply_text("Usage: /top <ENL|RES>.")
+        return
+    settings: Settings = context.application.bot_data["settings"]
+    rows = await _fetch_cycle_leaderboard(10, faction=faction_code)
+    faction_label = FACTION_DISPLAY_NAMES.get(faction_code, faction_code)
+    await _send_cycle_leaderboard(update, settings, rows, f"Top 10 {faction_label} agents by cycle points")
+
+
+async def last_cycle_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message:
+        return
+    settings: Settings = context.application.bot_data["settings"]
+    latest_cycle = await _get_latest_cycle_name_async()
+    if not latest_cycle:
+        await update.message.reply_text("No cycle data available.")
+        return
+    rows = await _fetch_cycle_leaderboard(10, cycle_name=latest_cycle)
+    await _send_cycle_leaderboard(update, settings, rows, f"Top 10 agents — {latest_cycle}")
+
+
+async def last_week_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message:
+        return
+    settings: Settings = context.application.bot_data["settings"]
+    since = datetime.now(timezone.utc) - timedelta(days=7)
+    rows = await _fetch_cycle_leaderboard(10, since=since)
+    await _send_cycle_leaderboard(update, settings, rows, "Top 10 agents — last 7 days")
 
 
 async def store_group_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1323,9 +1478,14 @@ async def set_group_privacy(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         options = ", ".join(sorted(mode_option.value for mode_option in GroupPrivacyMode))
         await update.message.reply_text(f"Invalid mode. Choose from {options}.")
         return
+    settings: Settings = context.application.bot_data["settings"]
     session_factory = context.application.bot_data["session_factory"]
     async with session_scope(session_factory) as session:
-        setting = await _get_or_create_group_setting(session, chat.id)
+        setting = await _get_or_create_group_setting(
+            session,
+            chat.id,
+            settings.group_message_retention_minutes,
+        )
         setting.privacy_mode = mode.value
     await update.message.reply_text(f"Privacy mode set to {mode.value}.")
 
@@ -1947,6 +2107,10 @@ def configure_handlers(application: Application) -> None:
     application.add_handler(CommandHandler("submit", submit))
     application.add_handler(CommandHandler("submit_data", submit_data))
     application.add_handler(CommandHandler("leaderboard", leaderboard))
+    application.add_handler(CommandHandler("top10", top10_command))
+    application.add_handler(CommandHandler("top", top_command))
+    application.add_handler(CommandHandler("lastcycle", last_cycle_command))
+    application.add_handler(CommandHandler("lastweek", last_week_command))
     application.add_handler(CommandHandler("myrank", myrank_command))
     application.add_handler(CommandHandler("privacy", set_group_privacy))
     application.add_handler(CommandHandler("pending_verifications", pending_verifications))
