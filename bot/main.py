@@ -566,6 +566,41 @@ def parse_tab_space_data(data: str) -> tuple[int, dict[str, Any], str]:
     return ap, metrics, time_span
 
 
+async def handle_ingress_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = update.message
+    if not message:
+        return
+    text = message.text or message.caption or ""
+    if not text.strip():
+        return
+    chat = getattr(update, "effective_chat", None)
+    chat_type = getattr(chat, "type", None)
+    if chat_type in {"group", "supergroup"}:
+        bot_username = context.bot_data.get("bot_username")
+        if not bot_username:
+            me = await context.bot.get_me()
+            bot_username = me.username or ""
+            context.bot_data["bot_username"] = bot_username
+        if not bot_username:
+            return
+        if f"@{bot_username.lower()}" not in text.lower():
+            return
+    parsed = parse_ingress_message(text)
+    if not parsed:
+        await message.reply_text("❌ Format incorrect. Use the standard format")
+        return
+    entries = [parsed] if isinstance(parsed, dict) else parsed
+    saved = False
+    for entry in entries:
+        if isinstance(entry, dict):
+            save_to_db(entry)
+            saved = True
+    if not saved:
+        await message.reply_text("❌ Format incorrect. Use the standard format")
+        return
+    await message.reply_text("✅ Data recorded")
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.message:
         return
@@ -1880,6 +1915,7 @@ def configure_handlers(application: Application) -> None:
     application.add_handler(CommandHandler("approve_verification", approve_verification))
     application.add_handler(CommandHandler("reject_verification", reject_verification))
     application.add_handler(CommandHandler("backup", manual_backup_command))
+    application.add_handler(MessageHandler((filters.TEXT & ~filters.COMMAND) & (filters.ChatType.PRIVATE | filters.ChatType.GROUPS), handle_ingress_message))
     application.add_handler(MessageHandler(filters.ChatType.GROUPS, store_group_message))
 
 
