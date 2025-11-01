@@ -62,7 +62,7 @@ def _ensure_agents_table() -> None:
 _ensure_agents_table()
 
 
-def save_to_db(parsed_data: dict) -> None:
+def save_to_db(parsed_data: dict) -> bool:
     cycle_points = parsed_data.get("cycle_points")
     if cycle_points is not None:
         try:
@@ -70,6 +70,21 @@ def save_to_db(parsed_data: dict) -> None:
         except (TypeError, ValueError):
             cycle_points = None
     with sqlite3.connect(AGENTS_DB_PATH) as connection:
+        cursor = connection.execute(
+            """
+            SELECT 1
+            FROM agents
+            WHERE agent_name = ? AND date = ? AND time = ?
+            LIMIT 1
+            """,
+            (
+                parsed_data.get("agent_name"),
+                parsed_data.get("date"),
+                parsed_data.get("time"),
+            ),
+        )
+        if cursor.fetchone():
+            return False
         connection.execute(
             """
             INSERT INTO agents (
@@ -94,6 +109,7 @@ def save_to_db(parsed_data: dict) -> None:
             ),
         )
         connection.commit()
+    return True
 
 
 # Constants for time span aliases
@@ -613,7 +629,9 @@ async def handle_ingress_message(update: Update, context: ContextTypes.DEFAULT_T
     saved = False
     for entry in entries:
         if isinstance(entry, dict):
-            save_to_db(entry)
+            if not save_to_db(entry):
+                await message.reply_text("⚠️ Duplicate entry ignored")
+                return
             saved = True
     if not saved:
         await message.reply_text("❌ Format incorrect. Use the standard format")
