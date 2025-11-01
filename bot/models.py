@@ -1,7 +1,7 @@
 from datetime import datetime
 from enum import Enum
 
-from sqlalchemy import BigInteger, CheckConstraint, DateTime, ForeignKey, Integer, JSON, String, UniqueConstraint, Boolean, Text
+from sqlalchemy import BigInteger, CheckConstraint, DateTime, ForeignKey, Integer, JSON, String, UniqueConstraint, Boolean, Text, Index
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -29,7 +29,7 @@ class Agent(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     telegram_id: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=False, index=True)
-    codename: Mapped[str] = mapped_column(String(64), nullable=False)
+    codename: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
     faction: Mapped[str] = mapped_column(String(8), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
@@ -50,6 +50,7 @@ class Submission(Base):
     chat_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
     ap: Mapped[int] = mapped_column(Integer, nullable=False)
     metrics: Mapped[dict] = mapped_column(JSON, nullable=False)
+    time_span: Mapped[str] = mapped_column(String(32), nullable=False, default="ALL TIME")
     submitted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     agent: Mapped[Agent] = relationship(back_populates="submissions")
@@ -59,6 +60,8 @@ class Submission(Base):
     __table_args__ = (
         Index('idx_submission_agent_chat', 'agent_id', 'chat_id'),
         Index('idx_submission_chat_ap', 'chat_id', 'ap'),
+        Index('idx_submission_agent_timespan', 'agent_id', 'time_span'),
+        CheckConstraint("time_span IN ('ALL TIME', 'LAST 7 DAYS', 'LAST 30 DAYS', 'PAST 7 DAYS', 'PAST 30 DAYS', 'THIS WEEK', 'THIS MONTH', 'LAST WEEK', 'LAST MONTH', 'WEEKLY', 'MONTHLY', 'DAILY')", name="submission_timespan_check"),
     )
 
 
