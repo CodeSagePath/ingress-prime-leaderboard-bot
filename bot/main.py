@@ -34,6 +34,112 @@ from .services.leaderboard import get_leaderboard
 
 logger = logging.getLogger(__name__)
 
+# Constants for time span aliases
+TIME_SPAN_ALIASES = {
+    "ALL": "ALL TIME",
+    "ALL TIME": "ALL TIME",
+    "WEEKLY": "WEEKLY",
+    "WEEK": "WEEKLY",
+    "MONTHLY": "MONTHLY",
+    "MONTH": "MONTHLY",
+}
+
+SPACE_SEPARATED_COLUMNS = [
+    "Time Span",
+    "Agent Name",
+    "Agent Faction",
+    "Date (yyyy-mm-dd)",
+    "Time (hh:mm:ss)",
+    "Level",
+    "Lifetime AP",
+    "Current AP",
+    "Unique Portals Visited",
+    "Unique Portals Drone Visited",
+    "Furthest Drone Distance",
+    "Portals Discovered",
+    "XM Collected",
+    "OPR Agreements",
+    "Portal Scans Uploaded",
+    "Uniques Scout Controlled",
+    "Resonators Deployed",
+    "Links Created",
+    "Control Fields Created",
+    "Mind Units Captured",
+    "Longest Link Ever Created",
+    "Largest Control Field",
+    "XM Recharged",
+    "Portals Captured",
+    "Unique Portals Captured",
+    "Mods Deployed",
+    "Hacks",
+    "Drone Hacks",
+    "Glyph Hack Points",
+    "Completed Hackstreaks",
+    "Longest Sojourner Streak",
+    "Resonators Destroyed",
+    "Portals Neutralized",
+    "Enemy Links Destroyed",
+    "Enemy Fields Destroyed",
+    "Battle Beacon Combatant",
+    "Drones Returned",
+    "Machina Links Destroyed",
+    "Machina Resonators Destroyed",
+    "Machina Portals Neutralized",
+    "Machina Portals Reclaimed",
+    "Max Time Portal Held",
+    "Max Time Link Maintained",
+    "Max Link Length x Days",
+    "Max Time Field Held",
+    "Largest Field MUs x Days",
+    "Forced Drone Recalls",
+    "Distance Walked",
+    "Kinetic Capsules Completed",
+    "Unique Missions Completed",
+    "Research Bounties Completed",
+    "Research Days Completed",
+    "Mission Day(s) Attended",
+    "NL-1331 Meetup(s) Attended",
+    "First Saturday Events",
+    "Second Sunday Events",
+    "+Delta Tokens",
+    "+Delta Reso Points",
+    "+Delta Field Points",
+    "Agents Recruited",
+    "Recursions",
+    "Months Subscribed",
+]
+
+SPACE_SEPARATED_IGNORED_COLUMNS = {
+    "+Delta Tokens",
+    "+Delta Reso Points",
+    "+Delta Field Points",
+}
+
+TIME_SPAN_VALUES = {
+    "ALL TIME",
+    "LAST 7 DAYS",
+    "LAST 30 DAYS",
+    "PAST 7 DAYS",
+    "PAST 30 DAYS",
+    "THIS WEEK",
+    "THIS MONTH",
+    "LAST WEEK",
+    "LAST MONTH",
+    "WEEKLY",
+    "MONTHLY",
+    "DAILY",
+}
+
+TIME_SPAN_ALIASES = {value.upper(): value for value in TIME_SPAN_VALUES}
+
+FACTION_ALIASES = {
+    "ENLIGHTENED": "ENL",
+    "RESISTANCE": "RES",
+    "ENL": "ENL",
+    "RES": "RES",
+    "MACHINA": "MACHINA",
+}
+
 CODENAME, FACTION = range(2)
 VERIFY_SUBMIT, VERIFY_SCREENSHOT = range(2)
 
@@ -70,6 +176,320 @@ def parse_submission(payload: str) -> tuple[int, dict[str, Any]]:
             pass
         metrics[key] = value
     return ap, metrics
+
+
+def _parse_space_separated_dataset(lines: list[str]) -> dict[str, str]:
+    header_line = lines[0]
+    if header_line != " ".join(SPACE_SEPARATED_COLUMNS):
+        raise ValueError("Unsupported header format")
+    data_line = next((line for line in lines[1:] if line.strip()), None)
+    if data_line is None:
+        raise ValueError("Data must contain at least one data row")
+    tokens = data_line.split()
+    if not tokens:
+        raise ValueError("Data row is empty")
+    time_span = None
+    position = 0
+    max_span_tokens = min(len(tokens), 4)
+    for end in range(1, max_span_tokens + 1):
+        candidate = " ".join(tokens[:end])
+        upper_candidate = candidate.upper()
+        if upper_candidate in TIME_SPAN_ALIASES:
+            time_span = TIME_SPAN_ALIASES[upper_candidate]
+            position = end
+            break
+    if time_span is None:
+        raise ValueError("Invalid time span value")
+    name_tokens: list[str] = []
+    while position < len(tokens) and tokens[position].upper() not in FACTION_ALIASES:
+        name_tokens.append(tokens[position])
+        position += 1
+    if not name_tokens or position >= len(tokens):
+        raise ValueError("Missing agent faction")
+    agent_name = " ".join(name_tokens)
+    faction_token = tokens[position]
+    position += 1
+    if faction_token.upper() not in FACTION_ALIASES:
+        raise ValueError(f"Unknown faction: {faction_token}")
+    if len(tokens) - position < 3:
+        raise ValueError("Missing date or time values")
+    date_token = tokens[position]
+    position += 1
+    time_token = tokens[position]
+    position += 1
+    level_token = tokens[position]
+    position += 1
+    remaining_tokens = tokens[position:]
+    expected_remaining = len(SPACE_SEPARATED_COLUMNS) - 6
+    if len(remaining_tokens) != expected_remaining:
+        raise ValueError("Data row has unexpected number of columns")
+    data_dict: dict[str, str] = {
+        "Time Span": time_span,
+        "Agent Name": agent_name,
+        "Agent Faction": faction_token,
+        "Date (yyyy-mm-dd)": date_token,
+        "Time (hh:mm:ss)": time_token,
+        "Level": level_token,
+    }
+    for column, value in zip(SPACE_SEPARATED_COLUMNS[6:], remaining_tokens):
+        if column in SPACE_SEPARATED_IGNORED_COLUMNS:
+            continue
+        data_dict[column] = value
+    return data_dict
+
+
+def _normalize_header(header: str) -> str:
+    header = header.strip()
+    header = header.replace("(", "").replace(")", "")
+    header = header.replace("/", " ")
+    header = header.replace("-", " ")
+    header = re.sub(r"[^A-Za-z0-9]+", " ", header)
+    normalized = re.sub(r"\s+", "_", header.strip().lower())
+    if normalized == "date_yyyy_mm_dd":
+        return "date"
+    if normalized == "time_hh_mm_ss":
+        return "time"
+    return normalized
+
+
+def _convert_numeric_value(value: str) -> Any:
+    cleaned = value.replace(",", "").strip()
+    if not cleaned:
+        return value
+    if cleaned.isdigit():
+        return int(cleaned)
+    try:
+        return float(cleaned)
+    except ValueError:
+        return value
+
+
+def _convert_cycle_points(value: str) -> int | None:
+    cleaned = value.replace(",", "").strip()
+    if not cleaned:
+        return None
+    try:
+        number = float(cleaned)
+    except ValueError:
+        return None
+    if number.is_integer():
+        return int(number)
+    return None
+
+
+def _parse_space_separated_row(row: str, headers: list[str]) -> dict[str, str] | None:
+    tokens = row.split()
+    if not tokens:
+        return None
+    time_span = None
+    position = 0
+    max_span_tokens = min(len(tokens), 4)
+    for end in range(1, max_span_tokens + 1):
+        candidate = " ".join(tokens[:end])
+        upper_candidate = candidate.upper()
+        if upper_candidate in TIME_SPAN_ALIASES:
+            time_span = TIME_SPAN_ALIASES[upper_candidate]
+            position = end
+            break
+    if time_span is None:
+        return None
+    name_tokens: list[str] = []
+    while position < len(tokens) and tokens[position].upper() not in FACTION_ALIASES:
+        name_tokens.append(tokens[position])
+        position += 1
+    if not name_tokens or position >= len(tokens):
+        return None
+    faction_token = tokens[position]
+    position += 1
+    if faction_token.upper() not in FACTION_ALIASES:
+        return None
+    agent_name = " ".join(name_tokens)
+    if len(tokens) - position < 3:
+        return None
+    date_token = tokens[position]
+    position += 1
+    time_token = tokens[position]
+    position += 1
+    level_token = tokens[position]
+    position += 1
+    remaining_tokens = tokens[position:]
+    if len(remaining_tokens) != len(headers) - 6:
+        return None
+    data: dict[str, str] = {
+        headers[0]: time_span,
+        headers[1]: agent_name,
+        headers[2]: faction_token,
+        headers[3]: date_token,
+        headers[4]: time_token,
+        headers[5]: level_token,
+    }
+    for column, value in zip(headers[6:], remaining_tokens):
+        data[column] = value
+    return data
+
+
+def _process_field_value(key: str, value: str) -> Any:
+    if key == "time_span":
+        upper_value = value.upper()
+        return TIME_SPAN_ALIASES.get(upper_value, value)
+    if key == "agent_faction":
+        upper_value = value.upper()
+        return FACTION_ALIASES.get(upper_value, upper_value)
+    if key == "time":
+        if ":" in value and len(value) >= 5:
+            return value[:5]
+        return value
+    if key == "date":
+        return value
+    return _convert_numeric_value(value)
+
+
+def _normalize_row(row_map: dict[str, str], headers: list[str], cycle_index: int, cycle_header: str) -> dict[str, Any] | None:
+    normalized: dict[str, Any] = {"original_header": cycle_header}
+    cycle_value = _convert_cycle_points(row_map.get(cycle_header, ""))
+    if cycle_value is None:
+        return None
+    normalized["cycle_points"] = cycle_value
+    for index, header in enumerate(headers):
+        if index == cycle_index:
+            continue
+        key = _normalize_header(header)
+        normalized[key] = _process_field_value(key, row_map.get(header, ""))
+    return normalized
+
+
+def parse_ingress_message(text: str) -> dict[str, Any] | list[dict[str, Any]] | None:
+    if not text or not text.strip():
+        return None
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if len(lines) < 2:
+        return None
+    header_line = lines[0]
+    use_tabs = "\t" in header_line
+    if use_tabs:
+        headers = [part.strip() for part in header_line.split("\t")]
+    else:
+        if header_line != " ".join(SPACE_SEPARATED_COLUMNS):
+            return None
+        headers = list(SPACE_SEPARATED_COLUMNS)
+    cycle_indices = [index for index, header in enumerate(headers) if header.startswith("+")]
+    if not cycle_indices:
+        return None
+    cycle_index = cycle_indices[0]
+    cycle_header = headers[cycle_index]
+    results: list[dict[str, Any]] = []
+    for data_line in lines[1:]:
+        if not data_line:
+            continue
+        if use_tabs:
+            values = [part.strip() for part in data_line.split("\t")]
+            if len(values) != len(headers):
+                return None
+            row_map = dict(zip(headers, values))
+        else:
+            row_map = _parse_space_separated_row(data_line, headers)
+            if row_map is None:
+                return None
+        normalized = _normalize_row(row_map, headers, cycle_index, cycle_header)
+        if normalized is None:
+            return None
+        results.append(normalized)
+    if not results:
+        return None
+    if len(results) == 1:
+        return results[0]
+    return results
+
+
+def parse_tab_space_data(data: str) -> tuple[int, dict[str, Any], str]:
+    """
+    Parse tab/space-separated data from Ingress Prime leaderboard.
+    
+    Args:
+        data: The raw data string containing header and data rows
+        
+    Returns:
+        A tuple containing:
+        - ap: The AP value as an integer
+        - metrics: A dictionary of all other metrics
+        - time_span: The time span value (e.g., "ALL TIME", "WEEKLY")
+        
+    Raises:
+        ValueError: If the data format is invalid or required fields are missing
+    """
+    lines = [line.strip() for line in data.strip().split('\n') if line.strip()]
+    if len(lines) < 2:
+        raise ValueError("Data must contain at least a header and one data row")
+    if '\t' not in lines[0]:
+        data_dict = _parse_space_separated_dataset(lines)
+    else:
+        headers = [part.strip() for part in lines[0].split('\t')]
+        filtered_headers = []
+        header_indices = []
+        for index, header in enumerate(headers):
+            if "+Delta" in header:
+                continue
+            filtered_headers.append(header)
+            header_indices.append(index)
+        values = [part.strip() for part in lines[1].split('\t')]
+        if len(values) != len(headers):
+            raise ValueError("Data row has unexpected number of columns")
+        filtered_values = [values[index] for index in header_indices]
+        data_dict = dict(zip(filtered_headers, filtered_values))
+    for column in SPACE_SEPARATED_IGNORED_COLUMNS:
+        data_dict.pop(column, None)
+    if "Agent Name" not in data_dict:
+        raise ValueError("Missing required field: Agent Name")
+    if "Agent Faction" not in data_dict:
+        raise ValueError("Missing required field: Agent Faction")
+    if "Lifetime AP" not in data_dict:
+        raise ValueError("Missing required field: Lifetime AP")
+    faction_token = data_dict["Agent Faction"]
+    faction_key = faction_token.upper()
+    if faction_key not in FACTION_ALIASES:
+        raise ValueError(f"Unknown faction: {faction_token}")
+    faction = FACTION_ALIASES[faction_key]
+    try:
+        ap = int(data_dict["Lifetime AP"].replace(",", ""))
+    except ValueError as exc:
+        raise ValueError(f"Invalid AP value: {data_dict['Lifetime AP']}") from exc
+    time_span = data_dict.get("Time Span", "ALL TIME")
+    metrics = {
+        "agent_name": data_dict["Agent Name"],
+        "faction": faction,
+    }
+    if "Date (yyyy-mm-dd)" in data_dict and "Time (hh:mm:ss)" in data_dict:
+        from datetime import datetime
+        date_str = data_dict["Date (yyyy-mm-dd)"]
+        time_str = data_dict["Time (hh:mm:ss)"]
+        try:
+            metrics["timestamp"] = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M:%S")
+        except ValueError as exc:
+            raise ValueError(f"Invalid date/time format: {date_str} {time_str}") from exc
+    for header, value in data_dict.items():
+        if header in {
+            "Agent Name",
+            "Agent Faction",
+            "Lifetime AP",
+            "Time Span",
+            "Date (yyyy-mm-dd)",
+            "Time (hh:mm:ss)",
+        }:
+            continue
+        key = header.lower().replace(" ", "_")
+        cleaned_value = value.replace(",", "")
+        try:
+            metrics[key] = int(cleaned_value)
+            continue
+        except ValueError:
+            pass
+        try:
+            metrics[key] = float(cleaned_value)
+            continue
+        except ValueError:
+            pass
+        metrics[key] = value
+    return ap, metrics, time_span
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -162,10 +582,19 @@ async def submit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     _, _, payload = text.partition(" ")
     payload = payload.strip()
     if not payload:
-        await update.message.reply_text("Usage: /submit ap=12345; metric=678")
+        await update.message.reply_text("Usage: /submit ap=12345; metric=678 or paste tab/space-separated data from Ingress Prime")
         return
+    
+    # Detect the format and parse accordingly
     try:
-        ap, metrics = parse_submission(payload)
+        # Check if the payload is in the new tab/space-separated format
+        if ('\t' in payload or 'Time Span' in payload) and ('Agent Name' in payload):
+            # New tab/space-separated format
+            ap, metrics, time_span = parse_tab_space_data(payload)
+        else:
+            # Old key=value format
+            ap, metrics = parse_submission(payload)
+            time_span = "ALL TIME"  # Default for old format
     except ValueError as exc:
         await update.message.reply_text(str(exc))
         return
@@ -174,12 +603,28 @@ async def submit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id_value = chat.id if is_group_chat else None
     session_factory = context.application.bot_data["session_factory"]
     agent = None
+    
+    # Check if the submission contains an agent name (new format)
+    agent_name_from_data = metrics.get("agent_name")
+    
     async with session_scope(session_factory) as session:
-        result = await session.execute(select(Agent).where(Agent.telegram_id == update.effective_user.id))
-        agent = result.scalar_one_or_none()
+        # If agent_name is provided in the data, try to find the agent by codename
+        if agent_name_from_data:
+            result = await session.execute(select(Agent).where(Agent.codename == agent_name_from_data))
+            agent = result.scalar_one_or_none()
+            
+            # If agent found by codename, verify it belongs to the current user
+            if agent and agent.telegram_id != update.effective_user.id:
+                await update.message.reply_text(f"Agent '{agent_name_from_data}' is registered to a different Telegram account. Please use your own agent data.")
+                return
+        
+        # If no agent found by codename or no agent_name in data, try by Telegram ID
         if not agent:
-            await update.message.reply_text("Register first with /register.")
-            return
+            result = await session.execute(select(Agent).where(Agent.telegram_id == update.effective_user.id))
+            agent = result.scalar_one_or_none()
+            if not agent:
+                await update.message.reply_text("Register first with /register.")
+                return
         
         # Check if the user already has a submission for this chat
         result = await session.execute(
@@ -195,6 +640,7 @@ async def submit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             # Update the existing submission
             existing_submission.ap = ap
             existing_submission.metrics = metrics
+            existing_submission.time_span = time_span
             existing_submission.submitted_at = datetime.now(timezone.utc)
             submission = existing_submission
             
@@ -206,7 +652,13 @@ async def submit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 existing_submission.verification.rejection_reason = None
         else:
             # Create a new submission
-            submission = Submission(agent_id=agent.id, chat_id=chat_id_value, ap=ap, metrics=metrics)
+            submission = Submission(
+                agent_id=agent.id,
+                chat_id=chat_id_value,
+                ap=ap,
+                metrics=metrics,
+                time_span=time_span
+            )
             session.add(submission)
             await session.flush()  # Get the submission ID
             
@@ -218,6 +670,10 @@ async def submit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             )
             session.add(verification)
             
+        # Get agent name and faction for the response message
+        agent_name = metrics.get("agent_name", agent.codename)
+        faction = metrics.get("faction", agent.faction)
+        
         if is_group_chat:
             setting = await _get_or_create_group_setting(
                 session,
@@ -228,10 +684,10 @@ async def submit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             if setting.privacy_mode != GroupPrivacyMode.public.value:
                 if settings.text_only_mode:
                     # Text-only mode for better performance on old Android devices
-                    reply = await update.message.reply_text(f"Recorded {ap} AP for {agent.codename}. Use /verify to submit a screenshot for verification.")
+                    reply = await update.message.reply_text(f"Recorded {ap} AP for {agent_name} [{faction}] ({time_span}). Use /verify to submit a screenshot for verification.")
                 else:
                     # Normal mode with emojis
-                    reply = await update.message.reply_text(f"✅ Recorded {ap} AP for {agent.codename}. Use /verify to submit a screenshot for verification.")
+                    reply = await update.message.reply_text(f"✅ Recorded {ap} AP for {agent_name} [{faction}] ({time_span}). Use /verify to submit a screenshot for verification.")
                 original_message_id = getattr(update.message, "message_id", None)
                 confirmation_message_id = getattr(reply, "message_id", None)
                 
@@ -255,17 +711,163 @@ async def submit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             else:
                 if settings.text_only_mode:
                     # Text-only mode for better performance on old Android devices
-                    await update.message.reply_text(f"Recorded {ap} AP for {agent.codename}. Use /verify to submit a screenshot for verification.")
+                    await update.message.reply_text(f"Recorded {ap} AP for {agent_name} [{faction}] ({time_span}). Use /verify to submit a screenshot for verification.")
                 else:
                     # Normal mode with emojis
-                    await update.message.reply_text(f"✅ Recorded {ap} AP for {agent.codename}. Use /verify to submit a screenshot for verification.")
+                    await update.message.reply_text(f"✅ Recorded {ap} AP for {agent_name} [{faction}] ({time_span}). Use /verify to submit a screenshot for verification.")
         else:
             if settings.text_only_mode:
                 # Text-only mode for better performance on old Android devices
-                await update.message.reply_text(f"Recorded {ap} AP for {agent.codename}. Use /verify to submit a screenshot for verification.")
+                await update.message.reply_text(f"Recorded {ap} AP for {agent_name} [{faction}] ({time_span}). Use /verify to submit a screenshot for verification.")
             else:
                 # Normal mode with emojis
-                await update.message.reply_text(f"✅ Recorded {ap} AP for {agent.codename}. Use /verify to submit a screenshot for verification.")
+                await update.message.reply_text(f"✅ Recorded {ap} AP for {agent_name} [{faction}] ({time_span}). Use /verify to submit a screenshot for verification.")
+
+
+async def submit_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle submission of tab/space-separated data from Ingress Prime leaderboard."""
+    if not update.message or not update.effective_user:
+        return
+    
+    settings: Settings = context.application.bot_data["settings"]
+    text = update.message.text or ""
+    _, _, payload = text.partition(" ")
+    payload = payload.strip()
+    
+    if not payload:
+        await update.message.reply_text("Usage: /submit_data <tab/space-separated data>")
+        return
+    
+    try:
+        ap, metrics, time_span = parse_tab_space_data(payload)
+    except ValueError as exc:
+        await update.message.reply_text(f"Error parsing data: {str(exc)}")
+        return
+    
+    chat = getattr(update, "effective_chat", None)
+    is_group_chat = bool(chat and getattr(chat, "type", None) in {"group", "supergroup"})
+    chat_id_value = chat.id if is_group_chat else None
+    session_factory = context.application.bot_data["session_factory"]
+    
+    async with session_scope(session_factory) as session:
+        # Check if the submission contains an agent name (new format)
+        agent_name_from_data = metrics.get("agent_name")
+        
+        # If agent_name is provided in the data, try to find the agent by codename
+        if agent_name_from_data:
+            result = await session.execute(select(Agent).where(Agent.codename == agent_name_from_data))
+            agent = result.scalar_one_or_none()
+            
+            # If agent found by codename, verify it belongs to the current user
+            if agent and agent.telegram_id != update.effective_user.id:
+                await update.message.reply_text(f"Agent '{agent_name_from_data}' is registered to a different Telegram account. Please use your own agent data.")
+                return
+        
+        # If no agent found by codename or no agent_name in data, try by Telegram ID
+        if not agent:
+            result = await session.execute(select(Agent).where(Agent.telegram_id == update.effective_user.id))
+            agent = result.scalar_one_or_none()
+            
+            if not agent:
+                await update.message.reply_text("Register first with /register.")
+                return
+        
+        # Check if the user already has a submission for this chat
+        result = await session.execute(
+            select(Submission)
+            .where(Submission.agent_id == agent.id)
+            .where(Submission.chat_id == chat_id_value)
+            .order_by(Submission.submitted_at.desc())
+            .limit(1)
+        )
+        existing_submission = result.scalar_one_or_none()
+        
+        if existing_submission:
+            # Update the existing submission
+            existing_submission.ap = ap
+            existing_submission.metrics = metrics
+            existing_submission.time_span = time_span
+            existing_submission.submitted_at = datetime.now(timezone.utc)
+            submission = existing_submission
+            
+            # If the submission has a verification, reset it to pending
+            if existing_submission.verification:
+                existing_submission.verification.status = VerificationStatus.pending.value
+                existing_submission.verification.admin_id = None
+                existing_submission.verification.verified_at = None
+                existing_submission.verification.rejection_reason = None
+        else:
+            # Create a new submission
+            submission = Submission(
+                agent_id=agent.id,
+                chat_id=chat_id_value,
+                ap=ap,
+                metrics=metrics,
+                time_span=time_span
+            )
+            session.add(submission)
+            await session.flush()  # Get the submission ID
+            
+            # Create a verification record for the new submission
+            verification = Verification(
+                submission_id=submission.id,
+                screenshot_path="",  # Empty path for now, will be updated if user sends screenshot
+                status=VerificationStatus.pending.value
+            )
+            session.add(verification)
+        
+        # Format the response message
+        agent_name = metrics.get("agent_name", agent.codename)
+        faction = metrics.get("faction", agent.faction)
+        
+        if is_group_chat:
+            setting = await _get_or_create_group_setting(
+                session,
+                chat.id,
+                settings.group_message_retention_minutes,
+            )
+            # Store the messages for later deletion by the scheduled job
+            if setting.privacy_mode != GroupPrivacyMode.public.value:
+                if settings.text_only_mode:
+                    # Text-only mode for better performance on old Android devices
+                    reply = await update.message.reply_text(f"Recorded {ap} AP for {agent_name} [{faction}] ({time_span}). Use /verify to submit a screenshot for verification.")
+                else:
+                    # Normal mode with emojis
+                    reply = await update.message.reply_text(f"✅ Recorded {ap} AP for {agent_name} [{faction}] ({time_span}). Use /verify to submit a screenshot for verification.")
+                original_message_id = getattr(update.message, "message_id", None)
+                confirmation_message_id = getattr(reply, "message_id", None)
+                
+                if original_message_id is not None:
+                    session.add(
+                        GroupMessage(
+                            chat_id=chat.id,
+                            message_id=original_message_id,
+                            received_at=update.message.date or datetime.now(timezone.utc),
+                        )
+                    )
+                
+                if confirmation_message_id is not None and setting.privacy_mode == GroupPrivacyMode.soft.value:
+                    session.add(
+                        GroupMessage(
+                            chat_id=chat.id,
+                            message_id=confirmation_message_id,
+                            received_at=datetime.now(timezone.utc),
+                        )
+                    )
+            else:
+                if settings.text_only_mode:
+                    # Text-only mode for better performance on old Android devices
+                    await update.message.reply_text(f"Recorded {ap} AP for {agent_name} [{faction}] ({time_span}). Use /verify to submit a screenshot for verification.")
+                else:
+                    # Normal mode with emojis
+                    await update.message.reply_text(f"✅ Recorded {ap} AP for {agent_name} [{faction}] ({time_span}). Use /verify to submit a screenshot for verification.")
+        else:
+            if settings.text_only_mode:
+                # Text-only mode for better performance on old Android devices
+                await update.message.reply_text(f"Recorded {ap} AP for {agent_name} [{faction}] ({time_span}). Use /verify to submit a screenshot for verification.")
+            else:
+                # Normal mode with emojis
+                await update.message.reply_text(f"✅ Recorded {ap} AP for {agent_name} [{faction}] ({time_span}). Use /verify to submit a screenshot for verification.")
 
 
 async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -277,6 +879,22 @@ async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     is_group_chat = bool(chat and getattr(chat, "type", None) in {"group", "supergroup"})
     chat_id_value = chat.id if is_group_chat else None
     privacy_mode = GroupPrivacyMode.public
+    
+    # Parse command arguments for time_span and metric
+    args = context.args
+    time_span = None
+    metric = "ap"  # Default metric
+    
+    # Check if time_span is specified
+    if args and args[0].upper() in TIME_SPAN_ALIASES:
+        time_span = TIME_SPAN_ALIASES[args[0].upper()]
+        # If there's a second argument, use it as the metric
+        if len(args) > 1:
+            metric = args[1].lower()
+    # If no time_span but there's an argument, use it as the metric
+    elif args:
+        metric = args[0].lower()
+    
     async with session_scope(session_factory) as session:
         if is_group_chat:
             setting = await _get_or_create_group_setting(
@@ -285,7 +903,16 @@ async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 settings.group_message_retention_minutes,
             )
             privacy_mode = GroupPrivacyMode(setting.privacy_mode)
-        rows = await get_leaderboard(session, settings.leaderboard_size, chat_id_value)
+        
+        # Get leaderboard with optional filters
+        rows = await get_leaderboard(
+            session,
+            settings.leaderboard_size,
+            chat_id_value,
+            time_span=time_span,
+            metric=metric
+        )
+    
     if not rows:
         await update.message.reply_text("No submissions yet.")
         return
@@ -293,7 +920,7 @@ async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     # Get verification status for each agent
     async with session_scope(session_factory) as session:
         agent_verification_status = {}
-        for codename, faction, total_ap in rows:
+        for codename, faction, metric_value, metrics_dict in rows:
             result = await session.execute(
                 select(Agent.id)
                 .where(Agent.codename == codename)
@@ -328,20 +955,35 @@ async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 else:
                     agent_verification_status[codename] = "❌"
     
+    # Format the leaderboard header
+    header_parts = ["Leaderboard"]
+    if time_span:
+        header_parts.append(f"({time_span})")
+    if metric != "ap":
+        header_parts.append(f"by {metric.upper()}")
+    
+    header = " ".join(header_parts)
+    
     if settings.text_only_mode:
         # Text-only mode for better performance on old Android devices
-        lines = []
-        for index, (codename, faction, total_ap) in enumerate(rows, start=1):
+        lines = [header]
+        for index, (codename, faction, metric_value, metrics_dict) in enumerate(rows, start=1):
             status = agent_verification_status.get(codename, "")
-            lines.append(f"{index}. {codename} [{faction}] {status} - {total_ap:,} AP")
+            if metric == "ap":
+                lines.append(f"{index}. {codename} [{faction}] {status} - {metric_value:,} AP")
+            else:
+                lines.append(f"{index}. {codename} [{faction}] {status} - {metric_value:,} {metric.upper()}")
         reply = await update.message.reply_text("\n".join(lines))
     else:
         # Normal mode with emojis and markdown
-        lines = []
-        for index, (codename, faction, total_ap) in enumerate(rows, start=1):
+        lines = [f"🏆 *{header}* 🏆"]
+        for index, (codename, faction, metric_value, metrics_dict) in enumerate(rows, start=1):
             status = agent_verification_status.get(codename, "")
-            lines.append(f"{index}. {codename} [{faction}] {status} — {total_ap:,} AP")
-        reply = await update.message.reply_text("\n".join(lines))
+            if metric == "ap":
+                lines.append(f"{index}. {codename} [{faction}] {status} — {metric_value:,} AP")
+            else:
+                lines.append(f"{index}. {codename} [{faction}] {status} — {metric_value:,} {metric.upper()}")
+        reply = await update.message.reply_text("\n".join(lines), parse_mode="MarkdownV2")
     
     # In strict mode, store messages for immediate deletion and clear submissions
     if is_group_chat and privacy_mode is GroupPrivacyMode.strict:
@@ -377,10 +1019,26 @@ async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 async def myrank_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.message or not update.effective_user:
         return
+    settings: Settings = context.application.bot_data["settings"]
     session_factory = context.application.bot_data["session_factory"]
     chat = getattr(update, "effective_chat", None)
     is_group_chat = bool(chat and getattr(chat, "type", None) in {"group", "supergroup"})
     chat_id_value = chat.id if is_group_chat else None
+    
+    # Parse command arguments for time_span and metric
+    args = context.args
+    time_span = None
+    metric = "ap"  # Default metric
+    
+    # Check if time_span is specified
+    if args and args[0].upper() in TIME_SPAN_ALIASES:
+        time_span = TIME_SPAN_ALIASES[args[0].upper()]
+        # If there's a second argument, use it as the metric
+        if len(args) > 1:
+            metric = args[1].lower()
+    # If no time_span but there's an argument, use it as the metric
+    elif args:
+        metric = args[0].lower()
     
     # Get the agent
     async with session_scope(session_factory) as session:
@@ -391,29 +1049,46 @@ async def myrank_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await update.message.reply_text("Register first with /register.")
             return
         
-        # Get the agent's total AP
-        agent_ap_result = await session.execute(
-            select(func.sum(Submission.ap))
+        # Determine which metric field to use for ranking
+        if metric == "ap":
+            metric_field = Submission.ap
+        else:
+            # For custom metrics, we need to extract them from the JSON metrics field
+            metric_field = func.coalesce(Submission.metrics[metric].astext.cast(Integer), 0)
+        
+        # Get the agent's metric value
+        agent_metric_result = await session.execute(
+            select(func.sum(metric_field))
             .where(Submission.agent_id == agent.id)
             .where(Submission.chat_id == chat_id_value if is_group_chat else True)
         )
-        agent_ap = agent_ap_result.scalar() or 0
+        if time_span:
+            agent_metric_result = await session.execute(
+                select(func.sum(metric_field))
+                .where(Submission.agent_id == agent.id)
+                .where(Submission.chat_id == chat_id_value if is_group_chat else True)
+                .where(Submission.time_span == time_span)
+            )
         
-        # Get all agents ranked by AP (for the same chat_id if in group)
+        agent_metric_value = agent_metric_result.scalar() or 0
+        
+        # Get all agents ranked by the selected metric (for the same chat_id if in group)
         stmt = (
-            select(Agent.id, Agent.codename, Agent.faction, func.sum(Submission.ap).label("total_ap"))
+            select(Agent.id, Agent.codename, Agent.faction, func.sum(metric_field).label("metric_value"))
             .join(Submission, Submission.agent_id == Agent.id)
         )
         if is_group_chat:
             stmt = stmt.where(Submission.chat_id == chat_id_value)
-        stmt = stmt.group_by(Agent.id).order_by(func.sum(Submission.ap).desc())
+        if time_span:
+            stmt = stmt.where(Submission.time_span == time_span)
+        stmt = stmt.group_by(Agent.id).order_by(func.sum(metric_field).desc())
         
         result = await session.execute(stmt)
         all_agents = result.all()
         
         # Find the user's rank
         rank = None
-        for i, (agent_id, codename, faction, total_ap) in enumerate(all_agents, start=1):
+        for i, (agent_id, codename, faction, metric_value) in enumerate(all_agents, start=1):
             if agent_id == agent.id:
                 rank = i
                 break
@@ -423,17 +1098,36 @@ async def myrank_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             return
         
         # Format the response
-        context_text = "in this group" if is_group_chat else "globally"
+        context_parts = ["Your rank"]
+        if is_group_chat:
+            context_parts.append("in this group")
+        else:
+            context_parts.append("globally")
+        
+        if time_span:
+            context_parts.append(f"for {time_span}")
+        
+        if metric != "ap":
+            context_parts.append(f"by {metric.upper()}")
+        
+        context_text = " ".join(context_parts)
+        
         if settings.text_only_mode:
             # Text-only mode for better performance on old Android devices
-            response = f"Your rank {context_text} is #{rank}\n"
-            response += f"{agent.codename} [{agent.faction}] - {int(agent_ap):,} AP"
+            response = f"{context_text} is #{rank}\n"
+            if metric == "ap":
+                response += f"{agent.codename} [{agent.faction}] - {int(agent_metric_value):,} AP"
+            else:
+                response += f"{agent.codename} [{agent.faction}] - {int(agent_metric_value):,} {metric.upper()}"
         else:
             # Normal mode with emojis and markdown
-            response = f"Your rank {context_text} is #{rank}\n"
-            response += f"{agent.codename} [{agent.faction}] — {int(agent_ap):,} AP"
+            response = f"{context_text} is *#{rank}*\n"
+            if metric == "ap":
+                response += f"{agent.codename} [{agent.faction}] — {int(agent_metric_value):,} AP"
+            else:
+                response += f"{agent.codename} [{agent.faction}] — {int(agent_metric_value):,} {metric.upper()}"
         
-        await update.message.reply_text(response)
+        await update.message.reply_text(response, parse_mode="MarkdownV2")
 
 
 async def store_group_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -505,7 +1199,9 @@ async def verify_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
             await update.message.reply_text("Register first with /register.")
             return ConversationHandler.END
     
-    await update.message.reply_text("Please send your submission data in the format: ap=12345; metric=678")
+    await update.message.reply_text("Please send your submission data in one of these formats:\n\n"
+                                   "1. Key-value format: ap=12345; metric=678\n"
+                                   "2. Tab/space-separated data from Ingress Prime (copy and paste)")
     return VERIFY_SUBMIT
 
 
@@ -515,8 +1211,17 @@ async def verify_submit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         return ConversationHandler.END
     
     text = update.message.text or ""
+    
+    # Detect the format and parse accordingly
     try:
-        ap, metrics = parse_submission(text)
+        # Check if the payload is in the new tab/space-separated format
+        if ('\t' in text or 'Time Span' in text) and ('Agent Name' in text):
+            # New tab/space-separated format
+            ap, metrics, time_span = parse_tab_space_data(text)
+        else:
+            # Old key=value format
+            ap, metrics = parse_submission(text)
+            time_span = "ALL TIME"  # Default for old format
     except ValueError as exc:
         await update.message.reply_text(str(exc))
         return VERIFY_SUBMIT
@@ -524,6 +1229,7 @@ async def verify_submit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     # Store the submission data in user context for later use
     context.user_data["verify_ap"] = ap
     context.user_data["verify_metrics"] = metrics
+    context.user_data["verify_time_span"] = time_span
     
     await update.message.reply_text("Now please send a screenshot as proof of your score.")
     return VERIFY_SCREENSHOT
@@ -542,6 +1248,7 @@ async def verify_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     # Get the submission data from user context
     ap = context.user_data.get("verify_ap")
     metrics = context.user_data.get("verify_metrics")
+    time_span = context.user_data.get("verify_time_span", "ALL TIME")
     
     if not ap or not metrics:
         await update.message.reply_text("Submission data not found. Please start over with /verify.")
@@ -567,12 +1274,27 @@ async def verify_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     chat_id_value = chat.id if is_group_chat else None
     
     async with session_scope(session_factory) as session:
-        result = await session.execute(select(Agent).where(Agent.telegram_id == update.effective_user.id))
-        agent = result.scalar_one_or_none()
+        # Check if the submission contains an agent name (new format)
+        agent_name_from_data = metrics.get("agent_name")
         
+        # If agent_name is provided in the data, try to find the agent by codename
+        if agent_name_from_data:
+            result = await session.execute(select(Agent).where(Agent.codename == agent_name_from_data))
+            agent = result.scalar_one_or_none()
+            
+            # If agent found by codename, verify it belongs to the current user
+            if agent and agent.telegram_id != update.effective_user.id:
+                await update.message.reply_text(f"Agent '{agent_name_from_data}' is registered to a different Telegram account. Please use your own agent data.")
+                return ConversationHandler.END
+        
+        # If no agent found by codename or no agent_name in data, try by Telegram ID
         if not agent:
-            await update.message.reply_text("Register first with /register.")
-            return ConversationHandler.END
+            result = await session.execute(select(Agent).where(Agent.telegram_id == update.effective_user.id))
+            agent = result.scalar_one_or_none()
+            
+            if not agent:
+                await update.message.reply_text("Register first with /register.")
+                return ConversationHandler.END
         
         # Check if the user already has a submission for this chat
         result = await session.execute(
@@ -588,6 +1310,7 @@ async def verify_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             # Update the existing submission
             existing_submission.ap = ap
             existing_submission.metrics = metrics
+            existing_submission.time_span = time_span
             existing_submission.submitted_at = datetime.now(timezone.utc)
             
             # Update or create the verification record
@@ -610,7 +1333,8 @@ async def verify_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                 agent_id=agent.id,
                 chat_id=chat_id_value,
                 ap=ap,
-                metrics=metrics
+                metrics=metrics,
+                time_span=time_span
             )
             session.add(submission)
             await session.flush()  # Get the submission ID
@@ -857,6 +1581,9 @@ async def announce_weekly_winners(application: Application, session_factory: asy
                     logger.info("No group chats found for announcing weekly winners")
                     return
                 
+                # Get settings from application bot_data
+                settings = application.bot_data["settings"]
+                
                 # Format the announcement message
                 if settings.text_only_mode:
                     # Text-only mode for better performance on old Android devices
@@ -1071,6 +1798,7 @@ def configure_handlers(application: Application) -> None:
     application.add_handler(verify_handler)
     
     application.add_handler(CommandHandler("submit", submit))
+    application.add_handler(CommandHandler("submit_data", submit_data))
     application.add_handler(CommandHandler("leaderboard", leaderboard))
     application.add_handler(CommandHandler("myrank", myrank_command))
     application.add_handler(CommandHandler("privacy", set_group_privacy))
