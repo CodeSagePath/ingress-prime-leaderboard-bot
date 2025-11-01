@@ -3,6 +3,7 @@ import asyncio
 import logging
 import re
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -33,6 +34,8 @@ from .models import Agent, GroupMessage, GroupPrivacyMode, GroupSetting, Pending
 from .services.leaderboard import get_leaderboard
 
 logger = logging.getLogger(__name__)
+
+CURRENT_CYCLE_FILE = Path(__file__).resolve().parent.parent / "current_cycle.txt"
 
 # Constants for time span aliases
 TIME_SPAN_ALIASES = {
@@ -345,7 +348,7 @@ def _process_field_value(key: str, value: str) -> Any:
 
 
 def _normalize_row(row_map: dict[str, str], headers: list[str], cycle_index: int, cycle_header: str) -> dict[str, Any] | None:
-    normalized: dict[str, Any] = {"original_header": cycle_header}
+    normalized: dict[str, Any] = {"original_header": cycle_header, "cycle_name": cycle_header}
     cycle_value = _convert_cycle_points(row_map.get(cycle_header, ""))
     if cycle_value is None:
         return None
@@ -377,6 +380,18 @@ def parse_ingress_message(text: str) -> dict[str, Any] | list[dict[str, Any]] | 
         return None
     cycle_index = cycle_indices[0]
     cycle_header = headers[cycle_index]
+    stored_cycle = ""
+    try:
+        stored_cycle = CURRENT_CYCLE_FILE.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        pass
+    except OSError:
+        stored_cycle = ""
+    if stored_cycle != cycle_header:
+        try:
+            CURRENT_CYCLE_FILE.write_text(cycle_header, encoding="utf-8")
+        except OSError:
+            logger.warning("Failed to update current cycle file")
     results: list[dict[str, Any]] = []
     for data_line in lines[1:]:
         if not data_line:
