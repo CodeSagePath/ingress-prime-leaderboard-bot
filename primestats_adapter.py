@@ -240,10 +240,10 @@ def _parse_stat_line(line: str, current_cycle: Optional[str]) -> Optional[Dict[s
     return record
 
 
-def parse_pasted_stats(text: str) -> List[Dict[str, object]]:
+def parse_pasted_stats(text: str) -> List[dict]:
     if not text or not text.strip():
         return []
-    results: List[Dict[str, object]] = []
+    results: List[dict] = []
     active_cycle = _read_current_cycle()
     for raw_line in text.splitlines():
         stripped = raw_line.strip()
