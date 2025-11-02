@@ -2141,17 +2141,31 @@ def configure_handlers(application: Application) -> None:
     application.add_handler(MessageHandler(filters.ChatType.GROUPS, store_group_message))
 
 
-def build_application() -> Application:
+async def run() -> None:
     load_dotenv()
+    # Reduce logging verbosity for better performance on old Android devices
     logging.basicConfig(level=logging.WARNING)
     settings = load_settings()
     engine = build_engine(settings)
     session_factory = build_session_factory(engine)
-    asyncio.run(init_models(engine))
+    await init_models(engine)
     redis_conn = Redis.from_url(settings.redis_url)
     queue = Queue(connection=redis_conn)
-    scheduler = AsyncIOScheduler(timezone=timezone.utc)
+    dashboard_server: uvicorn.Server | None = None
+    dashboard_task: asyncio.Task | None = None
+    if settings.dashboard_enabled:
+        dashboard_app = create_dashboard_app(settings, session_factory)
+        config = uvicorn.Config(
+            dashboard_app,
+            host=settings.dashboard_host,
+            port=settings.dashboard_port,
+            log_level="info",
+            loop="asyncio",
+        )
+        dashboard_server = uvicorn.Server(config)
+        dashboard_task = asyncio.create_task(dashboard_server.serve())
     application = ApplicationBuilder().token(settings.telegram_token).build()
+    scheduler = AsyncIOScheduler(timezone=timezone.utc)
     application.bot_data["settings"] = settings
     application.bot_data["engine"] = engine
     application.bot_data["session_factory"] = session_factory
@@ -2168,59 +2182,52 @@ def build_application() -> Application:
         misfire_grace_time=60,
         coalesce=True,
     )
+    # Add backup job if enabled
     if settings.backup_enabled:
+        # Determine trigger based on schedule
         if settings.backup_schedule.lower() == "daily":
             trigger = "cron"
-            trigger_args = {"hour": 2, "minute": 0}
+            trigger_args = {"hour": 2, "minute": 0}  # Run at 2 AM UTC daily
         elif settings.backup_schedule.lower() == "weekly":
             trigger = "cron"
-            trigger_args = {"day_of_week": "sun", "hour": 2, "minute": 0}
+            trigger_args = {"day_of_week": "sun", "hour": 2, "minute": 0}  # Run at 2 AM UTC on Sundays
         else:
+            # Default to daily if schedule is not recognized
             logger.warning(f"Unknown backup schedule '{settings.backup_schedule}', defaulting to daily")
             trigger = "cron"
             trigger_args = {"hour": 2, "minute": 0}
+        
         scheduler.add_job(
             perform_backup,
             trigger=trigger,
             args=(settings, application),
             max_instances=1,
-            misfire_grace_time=3600,
+            misfire_grace_time=3600,  # 1 hour grace time
             coalesce=True,
-            **trigger_args,
+            **trigger_args
         )
-    async def on_start(app: Application) -> None:
-        scheduler.start()
-        if settings.dashboard_enabled:
-            dashboard_app = create_dashboard_app(settings, session_factory)
-            config = uvicorn.Config(
-                dashboard_app,
-                host=settings.dashboard_host,
-                port=settings.dashboard_port,
-                log_level="info",
-                loop="asyncio",
-            )
-            server = uvicorn.Server(config)
-            task = app.create_task(server.serve())
-            app.bot_data["dashboard_server"] = server
-            app.bot_data["dashboard_task"] = task
-    async def on_stop(app: Application) -> None:
-        server = app.bot_data.pop("dashboard_server", None)
-        if server is not None:
-            server.should_exit = True
-        task = app.bot_data.pop("dashboard_task", None)
+        logger.info(f"Backup job scheduled to run {settings.backup_schedule} at 2 AM UTC")
+    
+    scheduler.start()
+    await application.initialize()
+    await application.start()
+    await application.updater.start_polling()
+    try:
+        await application.updater.idle()
+    finally:
+        if dashboard_server is not None:
+            dashboard_server.should_exit = True
         scheduler.shutdown(wait=False)
-        if task is not None:
-            await task
+        await application.stop()
+        await application.shutdown()
+        if dashboard_task is not None:
+            await dashboard_task
         await engine.dispose()
         redis_conn.close()
-    application.post_init.append(on_start)
-    application.post_stop.append(on_stop)
-    return application
 
 
 def main() -> None:
-    application = build_application()
-    application.run_polling()
+    asyncio.run(run())
 
 
 if __name__ == "__main__":
