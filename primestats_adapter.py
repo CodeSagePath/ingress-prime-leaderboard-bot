@@ -50,6 +50,7 @@ METRIC_KEYS = [
     "hacks",
     "drone_hacks",
     "glyph_hack_points",
+    "overclock_hack_points",
     "completed_hackstreaks",
     "longest_sojourner_streak",
     "resonators_destroyed",
@@ -77,15 +78,13 @@ METRIC_KEYS = [
     "nl1331_meetups_attended",
     "first_saturday_events",
     "second_sunday_events",
+    "opr_live_events",
     "delta_tokens",
     "delta_reso_points",
     "delta_field_points",
     "agents_recruited",
     "recursions",
     "months_subscribed",
-    "tokens",
-    "reso_points",
-    "field_points",
 ]
 
 def _tokenize(line: str) -> List[str]:

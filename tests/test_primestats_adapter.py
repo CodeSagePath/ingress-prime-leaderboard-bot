@@ -15,19 +15,99 @@ from unittest.mock import patch, mock_open
 
 from primestats_adapter import parse_pasted_stats, _parse_stat_line, _normalize_faction, _extract_cycle_info, _read_current_cycle, _write_current_cycle
 
+SPACE_SEPARATED_COLUMNS = [
+    "Time Span",
+    "Agent Name",
+    "Agent Faction",
+    "Date (yyyy-mm-dd)",
+    "Time (hh:mm:ss)",
+    "Level",
+    "Lifetime AP",
+    "Current AP",
+    "Unique Portals Visited",
+    "Unique Portals Drone Visited",
+    "Furthest Drone Distance",
+    "Portals Discovered",
+    "XM Collected",
+    "OPR Agreements",
+    "Portal Scans Uploaded",
+    "Uniques Scout Controlled",
+    "Resonators Deployed",
+    "Links Created",
+    "Control Fields Created",
+    "Mind Units Captured",
+    "Longest Link Ever Created",
+    "Largest Control Field",
+    "XM Recharged",
+    "Portals Captured",
+    "Unique Portals Captured",
+    "Mods Deployed",
+    "Hacks",
+    "Drone Hacks",
+    "Glyph Hack Points",
+    "Overclock Hack Points",
+    "Completed Hackstreaks",
+    "Longest Sojourner Streak",
+    "Resonators Destroyed",
+    "Portals Neutralized",
+    "Enemy Links Destroyed",
+    "Enemy Fields Destroyed",
+    "Battle Beacon Combatant",
+    "Drones Returned",
+    "Machina Links Destroyed",
+    "Machina Resonators Destroyed",
+    "Machina Portals Neutralized",
+    "Machina Portals Reclaimed",
+    "Max Time Portal Held",
+    "Max Time Link Maintained",
+    "Max Link Length x Days",
+    "Max Time Field Held",
+    "Largest Field MUs x Days",
+    "Forced Drone Recalls",
+    "Distance Walked",
+    "Kinetic Capsules Completed",
+    "Unique Missions Completed",
+    "Research Bounties Completed",
+    "Research Days Completed",
+    "Mission Day(s) Attended",
+    "NL-1331 Meetup(s) Attended",
+    "First Saturday Events",
+    "Second Sunday Events",
+    "OPR Live Events",
+    "+Delta Tokens",
+    "+Delta Reso Points",
+    "+Delta Field Points",
+    "Agents Recruited",
+    "Recursions",
+    "Months Subscribed",
+]
+
 
 class TestPrimestatsAdapter(unittest.TestCase):
     """Test cases for the primestats_adapter module"""
 
     def setUp(self):
         """Set up test fixtures"""
-        self.valid_line_with_cycle = "ALL TIME AgentName Enlightened 2023-11-01 12:34:56 16 12345678 9012345 100 200 300 400 500 600 700 800 900 1000 1100 1200 1300 1400 1500 1600 1700 1800 1900 2000 2100 2200 2300 2400 2500 2600 2700 2800 2900 3000 3100 3200 3300 3400 3500 3600 3700 3800 3900 4000 4100 4200 4300 4400 4500 4600 4700 4800 4900 5000 5100 5200 5300 5400 5500 5600 5700 +Theta 1500"
-        self.valid_line_without_cycle = "ALL TIME AgentName Resistance 2023-11-01 12:34:56 16 12345678 9012345 100 200 300 400 500 600 700 800 900 1000 1100 1200 1300 1400 1500 1600 1700 1800 1900 2000 2100 2200 2300 2400 2500 2600 2700 2800 2900 3000 3100 3200 3300 3400 3500 3600 3700 3800 3900 4000 4100 4200 4300 4400 4500 4600 4700 4800 4900 5000 5100 5200 5300 5400 5500 5600 5700"
+        def build_line(agent, faction, multiplier, cycle=None, cycle_points=None):
+            metrics_count = len(SPACE_SEPARATED_COLUMNS) - 6
+            metrics_values = []
+            for index in range(metrics_count):
+                metrics_values.append(str(multiplier * (index + 1) * 100))
+            metrics = " ".join(metrics_values)
+            line = f"ALL TIME {agent} {faction} 2023-11-01 12:34:56 16 {metrics}"
+            if cycle:
+                line = f"{line} +{cycle}"
+                if cycle_points is not None:
+                    line = f"{line} {cycle_points}"
+            return line
+
+        self.valid_line_with_cycle = build_line("AgentName", "Enlightened", 1, "Theta", 1500)
+        self.valid_line_without_cycle = build_line("AgentName", "Resistance", 1)
         self.valid_line_with_multiple_agents = f"""{self.valid_line_with_cycle}
-ALL TIME Agent2 Resistance 2023-11-01 12:34:56 16 87654321 1234567 100 200 300 400 500 600 700 800 900 1000 1100 1200 1300 1400 1500 1600 1700 1800 1900 2000 2100 2200 2300 2400 2500 2600 2700 2800 2900 3000 3100 3200 3300 3400 3500 3600 3700 3800 3900 4000 4100 4200 4300 4400 4500 4600 4700 4800 4900 5000 5100 5200 5300 5400 5500 5600 5700 +Gamma 2000"""
+{build_line("Agent2", "Resistance", 2, "Gamma", 2000)}"""
         self.invalid_line_missing_date = "ALL TIME AgentName Enlightened 12:34:56 16 12345678 9012345"
         self.invalid_line_malformed = "This is not a valid stat line"
-        self.header_line = "Time Span Agent Name Agent Faction Date (yyyy-mm-dd) Time (hh:mm:ss) Level Lifetime AP Current AP Unique Portals Visited Unique Portals Drone Visited Furthest Drone Distance Portals Discovered XM Collected OPR Agreements Portal Scans Uploaded Uniques Scout Controlled Resonators Deployed Links Created Control Fields Created Mind Units Captured Longest Link Ever Created Largest Control Field XM Recharged Portals Captured Unique Portals Captured Mods Deployed Hacks Drone Hacks Glyph Hack Points Completed Hackstreaks Longest Sojourner Streak Resonators Destroyed Portals Neutralized Enemy Links Destroyed Enemy Fields Destroyed Battle Beacon Combatant Drones Returned Machina Links Destroyed Machina Resonators Destroyed Machina Portals Neutralized Machina Portals Reclaimed Max Time Portal Held Max Time Link Maintained Max Link Length x Days Max Time Field Held Largest Field MUs x Days Forced Drone Recalls Distance Walked Kinetic Capsules Completed Unique Missions Completed Research Bounties Completed Research Days Completed Mission Day(s) Attended NL-1331 Meetup(s) Attended First Saturday Events Second Sunday Events +Delta Tokens +Delta Reso Points +Delta Field Points Agents Recruited Recursions Months Subscribed"
+        self.header_line = " ".join(SPACE_SEPARATED_COLUMNS)
         self.multi_line_with_header = f"""{self.header_line}
 {self.valid_line_with_cycle}
 {self.valid_line_without_cycle}"""
@@ -80,15 +160,15 @@ ALL TIME Agent2 Resistance 2023-11-01 12:34:56 16 87654321 1234567 100 200 300 4
         self.assertEqual(result['date'], "2023-11-01")
         self.assertEqual(result['time'], "12:34:56")
         self.assertEqual(result['level'], 16)
-        self.assertEqual(result['lifetime_ap'], 12345678)
-        self.assertEqual(result['current_ap'], 9012345)
+        self.assertEqual(result['lifetime_ap'], 100)
+        self.assertEqual(result['current_ap'], 200)
         self.assertEqual(result['cycle_name'], "Theta")
         self.assertEqual(result['cycle_points'], 1500)
         self.assertEqual(result['raw_line'], self.valid_line_with_cycle)
         # Check some additional fields
-        self.assertEqual(result['unique_portals_visited'], 100)
-        self.assertEqual(result['unique_portals_drone_visited'], 200)
-        self.assertEqual(result['furthest_drone_distance'], 300)
+        self.assertEqual(result['unique_portals_visited'], 300)
+        self.assertEqual(result['unique_portals_drone_visited'], 400)
+        self.assertEqual(result['furthest_drone_distance'], 500)
 
     def test_parse_stat_line_valid_without_cycle(self):
         """Test parsing a valid stat line without cycle information"""
@@ -100,15 +180,15 @@ ALL TIME Agent2 Resistance 2023-11-01 12:34:56 16 87654321 1234567 100 200 300 4
         self.assertEqual(result['date'], "2023-11-01")
         self.assertEqual(result['time'], "12:34:56")
         self.assertEqual(result['level'], 16)
-        self.assertEqual(result['lifetime_ap'], 12345678)
-        self.assertEqual(result['current_ap'], 9012345)
+        self.assertEqual(result['lifetime_ap'], 100)
+        self.assertEqual(result['current_ap'], 200)
         self.assertEqual(result['cycle_name'], "Gamma")  # From current_cycle parameter
         self.assertIsNone(result['cycle_points'])
         self.assertEqual(result['raw_line'], self.valid_line_without_cycle)
         # Check some additional fields
-        self.assertEqual(result['unique_portals_visited'], 100)
-        self.assertEqual(result['unique_portals_drone_visited'], 200)
-        self.assertEqual(result['furthest_drone_distance'], 300)
+        self.assertEqual(result['unique_portals_visited'], 300)
+        self.assertEqual(result['unique_portals_drone_visited'], 400)
+        self.assertEqual(result['furthest_drone_distance'], 500)
 
     def test_parse_stat_line_invalid_missing_date(self):
         """Test parsing an invalid stat line with missing date"""
@@ -220,7 +300,7 @@ ALL TIME Agent2 Resistance 2023-11-01 12:34:56 16 87654321 1234567 100 200 300 4
         """Test writing current cycle to file"""
         with patch('builtins.open', mock_open()) as mock_file:
             _write_current_cycle("Gamma")
-            mock_file.assert_called_once_with('current_cycle.txt', 'w')
+            mock_file.assert_called_once_with('current_cycle.txt', 'w', encoding='utf-8')
             mock_file().write.assert_called_once_with("Gamma")
 
     @patch('primestats_adapter._read_current_cycle')
