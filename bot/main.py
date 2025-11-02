@@ -30,7 +30,7 @@ from telegram.ext import (
 from .config import Settings, load_settings
 from .dashboard import create_dashboard_app
 from .database import build_engine, build_session_factory, init_models, session_scope
-from .jobs.deletion import cleanup_expired_group_messages
+from .jobs.deletion import cleanup_expired_group_messages, schedule_message_deletion
 from .jobs.backup import perform_backup, manual_backup_command
 from .models import Agent, GroupMessage, GroupPrivacyMode, GroupSetting, PendingAction, Submission, WeeklyStat, Verification, VerificationStatus
 from .services.leaderboard import get_leaderboard
@@ -958,6 +958,16 @@ async def submit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                             received_at=datetime.now(timezone.utc),
                         )
                     )
+                if settings.autodelete_enabled:
+                    queue: Queue | None = context.application.bot_data.get("queue")
+                    schedule_message_deletion(
+                        queue,
+                        settings.telegram_token,
+                        chat.id,
+                        original_message_id,
+                        confirmation_message_id if setting.privacy_mode == GroupPrivacyMode.soft.value else None,
+                        settings.autodelete_delay_seconds,
+                    )
             else:
                 if settings.text_only_mode:
                     # Text-only mode for better performance on old Android devices
@@ -1103,6 +1113,16 @@ async def submit_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                             message_id=confirmation_message_id,
                             received_at=datetime.now(timezone.utc),
                         )
+                    )
+                if settings.autodelete_enabled:
+                    queue: Queue | None = context.application.bot_data.get("queue")
+                    schedule_message_deletion(
+                        queue,
+                        settings.telegram_token,
+                        chat.id,
+                        original_message_id,
+                        confirmation_message_id if setting.privacy_mode == GroupPrivacyMode.soft.value else None,
+                        settings.autodelete_delay_seconds,
                     )
             else:
                 if settings.text_only_mode:
@@ -2156,7 +2176,7 @@ async def run() -> None:
     scheduler.add_job(
         cleanup_expired_group_messages,
         trigger="interval",
-        minutes=10,
+        minutes=7,
         args=(application, session_factory),
         max_instances=1,
         misfire_grace_time=60,

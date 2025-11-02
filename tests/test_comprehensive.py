@@ -444,6 +444,14 @@ class TestSubmitFeature:
         
         # Verify deletion was scheduled
         mock_queue.enqueue_at.assert_called_once()
+        args, _ = mock_queue.enqueue_at.call_args
+        assert isinstance(args[0], datetime)
+        assert args[1] == delete_message_job
+        assert args[2] == "test_token"
+        payload = args[3]
+        assert payload["chat_id"] == 123456
+        assert payload["message_id"] == 67890
+        assert payload["confirmation_message_id"] == 11111
 
     @pytest.mark.asyncio
     async def test_submit_with_autodelete_disabled(self, mock_update, mock_context, session_factory, mock_queue):
@@ -709,10 +717,13 @@ class TestGroupSubmitAutodelete:
         # Verify job was enqueued
         mock_queue.enqueue_at.assert_called_once()
         args, kwargs = mock_queue.enqueue_at.call_args
-        assert len(args) >= 2  # run_at and function
+        assert isinstance(args[0], datetime)  # run_at is a datetime
         assert args[1] == delete_message_job  # function
         assert args[2] == "test_token"  # token
-        assert isinstance(args[0], datetime)  # run_at is a datetime
+        payload = args[3]
+        assert payload["chat_id"] == 123456
+        assert payload["message_id"] == 67890
+        assert payload["confirmation_message_id"] == 11111
 
     def test_schedule_message_deletion_no_confirmation(self):
         """Test schedule_message_deletion with no confirmation message ID"""
@@ -730,10 +741,13 @@ class TestGroupSubmitAutodelete:
         # Verify job was enqueued
         mock_queue.enqueue_at.assert_called_once()
         args, kwargs = mock_queue.enqueue_at.call_args
-        assert len(args) >= 2  # run_at and function
+        assert isinstance(args[0], datetime)  # run_at is a datetime
         assert args[1] == delete_message_job  # function
         assert args[2] == "test_token"  # token
-        assert isinstance(args[0], datetime)  # run_at is a datetime
+        payload = args[3]
+        assert payload["chat_id"] == 123456
+        assert payload["message_id"] == 67890
+        assert payload["confirmation_message_id"] is None
 
 
 # ==================== LEADERBOARD CACHING FEATURE TESTS ====================
