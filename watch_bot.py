@@ -2,8 +2,9 @@ import logging
 from logging.handlers import RotatingFileHandler
 import subprocess
 import sys
+from pathlib import Path
 
-LOG_FILE = "log.txt"
+LOG_FILE = Path(__file__).resolve().parent / "watch_bot.log"
 MAX_BYTES = 524_288  # 512KB (reduced from 2MB for better performance on old Android devices)
 BACKUP_COUNT = 2  # Reduced from 5 to minimize storage usage
 
@@ -25,13 +26,13 @@ def run_bot(logger):
     import time
     while True:
         try:
-            result = subprocess.run([sys.executable, "bot.py"], check=False)
+            result = subprocess.run([sys.executable, "-m", "bot.main"], check=False)
             if result.returncode == 0:
-                logger.info("bot.py exited with code 0, relaunching")
+                logger.info("bot.main exited with code 0, relaunching")
             else:
-                logger.error("bot.py exited with code %s, relaunching", result.returncode)
+                logger.error("bot.main exited with code %s, relaunching", result.returncode)
         except Exception:
-            logger.exception("bot.py execution failed, relaunching")
+            logger.exception("bot main execution failed, relaunching")
         
         # Wait 2 seconds before restarting
         time.sleep(2)
