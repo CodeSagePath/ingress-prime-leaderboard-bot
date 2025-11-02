@@ -264,6 +264,123 @@ ALL TIME Agent2 Resistance 2023-11-01 12:34:56 16 87654321 1234567 100 200 300 4
         self.assertEqual(result['portals_discovered'], 400)
         self.assertEqual(result['xm_collected'], 500)
 
+    @patch('primestats_adapter._read_current_cycle')
+    @patch('primestats_adapter._write_current_cycle')
+    def test_parse_pasted_stats_glm_cases(self, mock_write_cycle, mock_read_cycle):
+        """Validate GLM scenarios for parse_pasted_stats"""
+        base_tokens_with_cycle = self.valid_line_with_cycle.split()
+        base_tokens_without_cycle = self.valid_line_without_cycle.split()
+        no_seconds_tokens = base_tokens_without_cycle.copy()
+        no_seconds_tokens[5] = "07:05"
+        line_no_seconds = " ".join(no_seconds_tokens)
+        cycle_no_points_tokens = base_tokens_with_cycle.copy()
+        cycle_no_points_tokens.pop()
+        line_cycle_no_points = " ".join(cycle_no_points_tokens)
+        float_metric_tokens = base_tokens_with_cycle.copy()
+        float_metric_tokens[11] = "300.5"
+        line_float_metric = " ".join(float_metric_tokens)
+        missing_metric_tokens = base_tokens_with_cycle.copy()
+        missing_metric_tokens[10] = "--"
+        line_missing_metric = " ".join(missing_metric_tokens)
+        invalid_level_tokens = base_tokens_with_cycle.copy()
+        invalid_level_tokens[6] = "--"
+        line_invalid_level = " ".join(invalid_level_tokens)
+        propagated_cycle_first = base_tokens_with_cycle.copy()
+        propagated_cycle_first[2] = "AgentAlpha"
+        propagated_cycle_first[-2] = "+Lambda"
+        propagated_cycle_first[-1] = "500"
+        propagated_cycle_second = base_tokens_without_cycle.copy()
+        propagated_cycle_second[2] = "AgentBeta"
+        propagated_cycle_input = "\n".join([
+            " ".join(propagated_cycle_first),
+            " ".join(propagated_cycle_second),
+        ])
+        test_cases = [
+            {
+                "name": "basic_cycle",
+                "text": self.valid_line_with_cycle,
+                "initial_cycle": None,
+                "expected": [
+                    {"agent_name": "AgentName", "cycle_name": "Theta", "cycle_points": 1500, "time": "12:34:56"},
+                ],
+                "expected_cycle_updates": ["Theta"],
+            },
+            {
+                "name": "cycle_from_file",
+                "text": self.valid_line_without_cycle,
+                "initial_cycle": "Sigma",
+                "expected": [
+                    {"agent_name": "AgentName", "cycle_name": "Sigma", "cycle_points": None, "time": "12:34:56"},
+                ],
+                "expected_cycle_updates": [],
+            },
+            {
+                "name": "normalized_time",
+                "text": line_no_seconds,
+                "initial_cycle": "Omega",
+                "expected": [
+                    {"agent_name": "AgentName", "cycle_name": "Omega", "cycle_points": None, "time": "07:05:00"},
+                ],
+                "expected_cycle_updates": [],
+            },
+            {
+                "name": "cycle_without_points",
+                "text": line_cycle_no_points,
+                "initial_cycle": None,
+                "expected": [
+                    {"agent_name": "AgentName", "cycle_name": "Theta", "cycle_points": None, "time": "12:34:56"},
+                ],
+                "expected_cycle_updates": ["Theta"],
+            },
+            {
+                "name": "float_metric",
+                "text": line_float_metric,
+                "initial_cycle": None,
+                "expected": [
+                    {"agent_name": "AgentName", "cycle_name": "Theta", "cycle_points": 1500, "furthest_drone_distance": 300.5},
+                ],
+                "expected_cycle_updates": ["Theta"],
+            },
+            {
+                "name": "metric_none",
+                "text": line_missing_metric,
+                "initial_cycle": None,
+                "expected": [
+                    {"agent_name": "AgentName", "cycle_name": "Theta", "cycle_points": 1500, "unique_portals_drone_visited": None},
+                ],
+                "expected_cycle_updates": ["Theta"],
+            },
+            {
+                "name": "invalid_level",
+                "text": line_invalid_level,
+                "initial_cycle": None,
+                "expected": [],
+                "expected_cycle_updates": [],
+            },
+            {
+                "name": "cycle_propagation",
+                "text": propagated_cycle_input,
+                "initial_cycle": None,
+                "expected": [
+                    {"agent_name": "AgentAlpha", "cycle_name": "Lambda", "cycle_points": 500},
+                    {"agent_name": "AgentBeta", "cycle_name": "Lambda", "cycle_points": None},
+                ],
+                "expected_cycle_updates": ["Lambda"],
+            },
+        ]
+        for case in test_cases:
+            mock_read_cycle.reset_mock()
+            mock_write_cycle.reset_mock()
+            mock_read_cycle.return_value = case["initial_cycle"]
+            result = parse_pasted_stats(case["text"])
+            self.assertEqual(len(result), len(case["expected"]), case["name"])
+            for index, expected_record in enumerate(case["expected"]):
+                record = result[index]
+                for key, value in expected_record.items():
+                    self.assertEqual(record.get(key), value, f"{case['name']}:{key}")
+            self.assertEqual([mock_call.args[0] for mock_call in mock_write_cycle.call_args_list], case["expected_cycle_updates"], case["name"])
+            self.assertEqual(mock_read_cycle.call_count, 1, case["name"])
+
 
 if __name__ == '__main__':
     unittest.main()
