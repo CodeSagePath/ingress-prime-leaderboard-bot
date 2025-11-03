@@ -1,0 +1,86 @@
+User Commands
+/start - Welcome message and getting started
+Options: none
+
+/help - Show available commands
+Options: none
+
+/register - Start agent registration flow; collects codename then faction
+Options: none
+
+/cancel - Cancel the active conversation
+Options: none
+
+/submit - Submit AP and metrics payload using key=value pairs or tab/space-separated export
+Options:
+- payload: required; either key=value entries or tab/space-separated export copied from Ingress Prime
+
+/submit_data - Submit tab or space separated export from Ingress Prime
+Options:
+- payload: required; raw tab/space-separated export including header line
+
+/verify - Begin screenshot verification workflow
+Options:
+- step 1: send payload in key=value or tab/space-separated format
+- step 2: send screenshot photo
+
+/proof - Upload verification screenshot without a submission
+Options:
+- db_path: optional first argument to tag the proof with a database path
+
+/leaderboard - Display leaderboard with optional filters
+Options:
+- time_span: optional first argument; accepts ALL, ALL TIME, LAST 7 DAYS, LAST 30 DAYS, PAST 7 DAYS, PAST 30 DAYS, THIS WEEK, THIS MONTH, LAST WEEK, LAST MONTH, WEEKLY, MONTHLY, DAILY
+- metric: optional second argument (or first if time_span omitted); defaults to ap and accepts any stored metric key (e.g. ap, xm_collected)
+
+/myrank - Show your rank with optional filters
+Options:
+- time_span: optional first argument; same values as /leaderboard
+- metric: optional second argument (or first if time_span omitted); defaults to ap and accepts any stored metric key
+
+/top10 - List top 10 agents by cycle points
+Options: none
+
+/top - List top 10 agents for a faction
+Options:
+- faction: required first argument; ENL or RES
+
+/lastcycle - Show top agents from the latest cycle
+Options: none
+
+/lastweek - Show top agents from the last seven days
+Options: none
+
+/settings - Configure personal display settings via conversation
+Options:
+- step 1: reply with 1, 2, 3, or 4 to choose date_format, number_format, leaderboard_size, or show_emojis
+- step 2: reply with the new value for the selected setting
+
+Group Admin Commands
+/privacy - Set group privacy mode (group chats only)
+Options:
+- mode: required first argument; public, soft, or strict
+
+Bot Admin Commands
+/pending_verifications - List pending verification requests
+Options: none
+
+/approve_verification - Approve a verification by ID
+Options:
+- verification_id: required numeric first argument
+
+/reject_verification - Reject a verification with reason
+Options:
+- verification_id: required numeric first argument
+- reason: required free-text explanation following the ID
+
+/broadcast - Send a broadcast message to all users
+Options:
+- step 1: reply with the broadcast message content
+- step 2: confirm with yes or no
+
+/backup - Trigger a manual database backup
+Options: none
+
+/stats - Show bot usage statistics
+Options: none

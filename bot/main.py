@@ -17,6 +17,7 @@ from rq import Queue
 import uvicorn
 from sqlalchemy import delete, select, func
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.orm import selectinload
 from telegram import Update
 from telegram.error import RetryAfter, TelegramError
 from telegram.ext import (
@@ -60,6 +61,29 @@ def _ensure_agents_table() -> None:
             """
         )
         connection.commit()
+
+
+def escape_markdown_v2(text: str) -> str:
+    """
+    Escape special characters for Telegram's MarkdownV2 format.
+    
+    In MarkdownV2, the following characters must be escaped with a preceding backslash:
+    _ * [ ] ( ) ~ ` > # + - = | { } . !
+    
+    Args:
+        text: The input text to escape
+        
+    Returns:
+        The text with all special characters properly escaped
+    """
+    # List of characters that need to be escaped in MarkdownV2
+    special_chars = r'_*[]()~`>#+-=|{}.,!'
+    
+    # Escape each special character by adding a backslash before it
+    for char in special_chars:
+        text = text.replace(char, f'\\{char}')
+    
+    return text
 
 
 def convert_datetime_to_iso(data):
@@ -272,14 +296,12 @@ SPACE_SEPARATED_COLUMNS = [
     "Hacks",
     "Drone Hacks",
     "Glyph Hack Points",
-    "Overclock Hack Points",
     "Completed Hackstreaks",
     "Longest Sojourner Streak",
     "Resonators Destroyed",
     "Portals Neutralized",
     "Enemy Links Destroyed",
     "Enemy Fields Destroyed",
-    "Battle Beacon Combatant",
     "Drones Returned",
     "Machina Links Destroyed",
     "Machina Resonators Destroyed",
@@ -296,46 +318,17 @@ SPACE_SEPARATED_COLUMNS = [
     "Unique Missions Completed",
     "Research Bounties Completed",
     "Research Days Completed",
-    "Mission Day(s) Attended",
     "NL-1331 Meetup(s) Attended",
     "First Saturday Events",
     "Second Sunday Events",
-    "OPR Live Events",
-    "+Delta Tokens",
-    "+Delta Reso Points",
-    "+Delta Field Points",
+    "+Beta Tokens",
     "Agents Recruited",
-    "Recursions",
-    "Months Subscribed",
 ]
 
-SPACE_SEPARATED_IGNORED_COLUMNS = {
-    "+Delta Tokens",
-    "+Delta Reso Points",
-    "+Delta Field Points",
-}
+SPACE_SEPARATED_IGNORED_COLUMNS: set[str] = set()
 
-SPACE_SEPARATED_OPTIONAL_COLUMNS = (
-    "Mission Day(s) Attended",
-    "NL-1331 Meetup(s) Attended",
-    "First Saturday Events",
-    "Second Sunday Events",
-    "OPR Live Events",
-    "Agents Recruited",
-)
-
-
-def _build_space_separated_header_map() -> dict[str, tuple[str, ...]]:
-    variants: dict[str, tuple[str, ...]] = {}
-    optional_list = list(SPACE_SEPARATED_OPTIONAL_COLUMNS)
-    for count in range(len(optional_list) + 1):
-        for combo in combinations(optional_list, count):
-            variant = tuple(column for column in SPACE_SEPARATED_COLUMNS if column not in combo)
-            variants[" ".join(variant)] = variant
-    return variants
-
-
-SPACE_SEPARATED_HEADER_MAP = _build_space_separated_header_map()
+SPACE_SEPARATED_HEADER_LINE = " ".join(SPACE_SEPARATED_COLUMNS)
+SPACE_SEPARATED_HEADER_MAP = {SPACE_SEPARATED_HEADER_LINE: tuple(SPACE_SEPARATED_COLUMNS)}
 
 TIME_SPAN_VALUES = {
     "ALL TIME",
@@ -685,24 +678,19 @@ def parse_tab_space_data(data: str) -> tuple[int, dict[str, Any], str]:
     lines = [line.strip() for line in data.strip().split('\n') if line.strip()]
     if len(lines) < 2:
         raise ValueError("Data must contain at least a header and one data row")
-    if '\t' not in lines[0]:
-        data_dict = _parse_space_separated_dataset(lines)
-    else:
-        headers = [part.strip() for part in lines[0].split('\t')]
-        filtered_headers = []
-        header_indices = []
-        for index, header in enumerate(headers):
-            if "+Delta" in header:
-                continue
-            filtered_headers.append(header)
-            header_indices.append(index)
+    header_line = lines[0]
+    expected_headers = tuple(SPACE_SEPARATED_COLUMNS)
+    data_dict: dict[str, str]
+    if '\t' in header_line:
+        headers = tuple(part.strip() for part in header_line.split('\t'))
+        if headers != expected_headers:
+            raise ValueError("Unsupported header format")
         values = [part.strip() for part in lines[1].split('\t')]
         if len(values) != len(headers):
             raise ValueError("Data row has unexpected number of columns")
-        filtered_values = [values[index] for index in header_indices]
-        data_dict = dict(zip(filtered_headers, filtered_values))
-    for column in SPACE_SEPARATED_IGNORED_COLUMNS:
-        data_dict.pop(column, None)
+        data_dict = dict(zip(headers, values))
+    else:
+        data_dict = _parse_space_separated_dataset(lines)
     if "Agent Name" not in data_dict:
         raise ValueError("Missing required field: Agent Name")
     if "Agent Faction" not in data_dict:
@@ -719,9 +707,11 @@ def parse_tab_space_data(data: str) -> tuple[int, dict[str, Any], str]:
     except ValueError as exc:
         raise ValueError(f"Invalid AP value: {data_dict['Lifetime AP']}") from exc
     time_span = data_dict.get("Time Span", "ALL TIME")
-    metrics = {
+    metrics: dict[str, Any] = {
         "agent_name": data_dict["Agent Name"],
+        "agent_faction": faction,
         "faction": faction,
+        "time_span": time_span,
     }
     if "Date (yyyy-mm-dd)" in data_dict and "Time (hh:mm:ss)" in data_dict:
         from datetime import datetime
@@ -731,29 +721,22 @@ def parse_tab_space_data(data: str) -> tuple[int, dict[str, Any], str]:
             metrics["timestamp"] = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M:%S")
         except ValueError as exc:
             raise ValueError(f"Invalid date/time format: {date_str} {time_str}") from exc
+    skip_headers = {
+        "Agent Name",
+        "Agent Faction",
+        "Lifetime AP",
+        "Time Span",
+        "Date (yyyy-mm-dd)",
+        "Time (hh:mm:ss)",
+    }
     for header, value in data_dict.items():
-        if header in {
-            "Agent Name",
-            "Agent Faction",
-            "Lifetime AP",
-            "Time Span",
-            "Date (yyyy-mm-dd)",
-            "Time (hh:mm:ss)",
-        }:
+        if header in skip_headers:
             continue
-        key = header.lower().replace(" ", "_")
-        cleaned_value = value.replace(",", "")
-        try:
-            metrics[key] = int(cleaned_value)
-            continue
-        except ValueError:
-            pass
-        try:
-            metrics[key] = float(cleaned_value)
-            continue
-        except ValueError:
-            pass
-        metrics[key] = value
+        key = _normalize_header(header)
+        normalized_value = _convert_numeric_value(value)
+        metrics[key] = normalized_value
+        if key == "current_ap":
+            metrics["ap"] = normalized_value
     return ap, metrics, time_span
 
 
@@ -829,36 +812,36 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             "/broadcast - Send a broadcast message to all users\n"
             "/backup - Manually trigger a database backup"
         )
+        await update.message.reply_text(help_text)
     else:
-        # Normal mode with emojis and markdown
+        # Normal mode with emojis and markdown - using escape_markdown_v2 for proper escaping
         help_text = (
-            "🤖 *PrimeStatsBot Help* 🤖\n\n"
-            "*User Commands:*\n"
-            "/start - Welcome message and getting started\n"
-            "/register - Register your agent with the bot\n"
-            "/submit - Submit your AP and metrics\n"
-            "/submit_data - Submit tab/space-separated data from Ingress Prime\n"
-            "/verify - Submit your stats with screenshot verification\n"
-            "/proof - Submit a screenshot as proof\n"
-            "/leaderboard - View the leaderboard\n"
-            "/myrank - Check your rank on the leaderboard\n"
-            "/top10 - View top 10 agents by cycle points\n"
-            "/top <ENL|RES> - View top 10 agents by faction\n"
-            "/lastcycle - View top agents from the last cycle\n"
-            "/lastweek - View top agents from the last 7 days\n"
-            "/settings - Configure your display settings\n"
-            "/help - Show this help message\n\n"
-            "*Group Admin Commands:*\n"
-            "/privacy <public|soft|strict> - Set group privacy mode\n\n"
-            "*Bot Admin Commands:*\n"
-            "/pending_verifications - View pending verification requests\n"
-            "/approve_verification <id> - Approve a verification request\n"
-            "/reject_verification <id> <reason> - Reject a verification request\n"
-            "/broadcast - Send a broadcast message to all users\n"
+            "🤖 *PrimeStatsBot Help* 🤖\\n\\n"
+            "*User Commands:*\\n"
+            "/start - Welcome message and getting started\\n"
+            "/register - Register your agent with the bot\\n"
+            "/submit - Submit your AP and metrics\\n"
+            "/submit_data - Submit tab/space-separated data from Ingress Prime\\n"
+            "/verify - Submit your stats with screenshot verification\\n"
+            "/proof - Submit a screenshot as proof\\n"
+            "/leaderboard - View the leaderboard\\n"
+            "/myrank - Check your rank on the leaderboard\\n"
+            "/top10 - View top 10 agents by cycle points\\n"
+            "/top <ENL\\|RES> - View top 10 agents by faction\\n"
+            "/lastcycle - View top agents from the last cycle\\n"
+            "/lastweek - View top agents from the last 7 days\\n"
+            "/settings - Configure your display settings\\n"
+            "/help - Show this help message\\n\\n"
+            "*Group Admin Commands:*\\n"
+            "/privacy <public\\|soft\\|strict> - Set group privacy mode\\n\\n"
+            "*Bot Admin Commands:*\\n"
+            "/pending_verifications - View pending verification requests\\n"
+            "/approve_verification <id> - Approve a verification request\\n"
+            "/reject_verification <id> <reason> - Reject a verification request\\n"
+            "/broadcast - Send a broadcast message to all users\\n"
             "/backup - Manually trigger a database backup"
         )
-    
-    await update.message.reply_text(help_text, parse_mode="MarkdownV2")
+        await update.message.reply_text(help_text, parse_mode="MarkdownV2")
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -998,6 +981,7 @@ async def submit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         # Check if the user already has a submission for this chat
         result = await session.execute(
             select(Submission)
+            .options(selectinload(Submission.verification))
             .where(Submission.agent_id == agent.id)
             .where(Submission.chat_id == chat_id_value)
             .order_by(Submission.submitted_at.desc())
@@ -1154,6 +1138,7 @@ async def submit_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         # Check if the user already has a submission for this chat
         result = await session.execute(
             select(Submission)
+            .options(selectinload(Submission.verification))
             .where(Submission.agent_id == agent.id)
             .where(Submission.chat_id == chat_id_value)
             .order_by(Submission.submitted_at.desc())
@@ -1311,7 +1296,7 @@ async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         agent_verification_status = {}
         for codename, faction, metric_value, metrics_dict in rows:
             result = await session.execute(
-                select(Agent.id)
+                select(Agent)
                 .where(Agent.codename == codename)
                 .where(Agent.faction == faction)
             )
@@ -1364,14 +1349,22 @@ async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 lines.append(f"{index}. {codename} [{faction}] {status} - {metric_value:,} {metric.upper()}")
         reply = await update.message.reply_text("\n".join(lines))
     else:
-        # Normal mode with emojis and markdown
-        lines = [f"🏆 *{header}* 🏆"]
+        # Normal mode with emojis and markdown - using escape_markdown_v2 for proper escaping
+        lines = [f"🏆 *{escape_markdown_v2(header)}* 🏆"]
         for index, (codename, faction, metric_value, metrics_dict) in enumerate(rows, start=1):
             status = agent_verification_status.get(codename, "")
+            # Escape all the text content that will be sent with parse_mode="MarkdownV2"
+            escaped_index = escape_markdown_v2(str(index) + ".")
+            escaped_codename = escape_markdown_v2(codename)
+            escaped_faction = escape_markdown_v2(faction)
+            escaped_status = escape_markdown_v2(status)
+            escaped_metric_value = escape_markdown_v2(f"{metric_value:,}")
+            
             if metric == "ap":
-                lines.append(f"{index}. {codename} [{faction}] {status} — {metric_value:,} AP")
+                lines.append(f"{escaped_index} {escaped_codename} \\[{escaped_faction}\\] {escaped_status} — {escaped_metric_value} AP")
             else:
-                lines.append(f"{index}. {codename} [{faction}] {status} — {metric_value:,} {metric.upper()}")
+                escaped_metric_name = escape_markdown_v2(metric.upper())
+                lines.append(f"{escaped_index} {escaped_codename} \\[{escaped_faction}\\] {escaped_status} — {escaped_metric_value} {escaped_metric_name}")
         reply = await update.message.reply_text("\n".join(lines), parse_mode="MarkdownV2")
     
     # In strict mode, store messages for immediate deletion and clear submissions
@@ -1515,12 +1508,12 @@ async def myrank_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 response += f"{agent.codename} [{agent.faction}] - {int(agent_metric_value):,} {metric.upper()}"
             await update.message.reply_text(response)
             return
-        # Normal mode with emojis and markdown
-        response = f"{context_text} is *#{rank}*\n"
+        # Normal mode with emojis and markdown - using escape_markdown_v2 for proper escaping
+        response = f"{escape_markdown_v2(context_text)} is *#{escape_markdown_v2(str(rank))}*\n"
         if metric == "ap":
-            response += f"{agent.codename} [{agent.faction}] — {int(agent_metric_value):,} AP"
+            response += f"{escape_markdown_v2(agent.codename)} \\[{escape_markdown_v2(agent.faction)}\\] — {escape_markdown_v2(str(int(agent_metric_value)))} AP"
         else:
-            response += f"{agent.codename} [{agent.faction}] — {int(agent_metric_value):,} {metric.upper()}"
+            response += f"{escape_markdown_v2(agent.codename)} \\[{escape_markdown_v2(agent.faction)}\\] — {escape_markdown_v2(str(int(agent_metric_value)))} {escape_markdown_v2(metric.upper())}"
         await update.message.reply_text(response, parse_mode="MarkdownV2")
 
 
@@ -1745,6 +1738,7 @@ async def verify_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         # Check if the user already has a submission for this chat
         result = await session.execute(
             select(Submission)
+            .options(selectinload(Submission.verification))
             .where(Submission.agent_id == agent.id)
             .where(Submission.chat_id == chat_id_value)
             .order_by(Submission.submitted_at.desc())
@@ -1925,14 +1919,14 @@ async def pending_verifications(update: Update, context: ContextTypes.DEFAULT_TY
             await update.message.reply_text("No pending verification requests.")
             return
         
-        # Format the response
-        lines = ["*Pending Verification Requests:*\n"]
+        # Format the response - using escape_markdown_v2 for proper escaping
+        lines = [f"*Pending Verification Requests:*\\n"]
         for verification, submission, agent in pending_verifications:
             lines.append(
-                f"ID: {verification.id}\n"
-                f"Agent: {agent.codename} [{agent.faction}]\n"
-                f"AP: {submission.ap}\n"
-                f"Submitted: {submission.submitted_at.strftime('%Y-%m-%d %H:%M')}\n"
+                f"ID: {escape_markdown_v2(str(verification.id))}\\n"
+                f"Agent: {escape_markdown_v2(agent.codename)} \\[{escape_markdown_v2(agent.faction)}\\]\\n"
+                f"AP: {escape_markdown_v2(str(submission.ap))}\\n"
+                f"Submitted: {escape_markdown_v2(submission.submitted_at.strftime('%Y-%m-%d %H:%M'))}\\n"
             )
         
         await update.message.reply_text("\n".join(lines), parse_mode="MarkdownV2")
@@ -2171,29 +2165,29 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             for i, (codename, faction, count) in enumerate(active_users, start=1):
                 stats_text += f"{i}. {codename} [{faction}] - {count} submissions\n"
         else:
-            # Normal mode with emojis and markdown
+            # Normal mode with emojis and markdown - using escape_markdown_v2 for proper escaping
             stats_text = (
-                "📊 *BOT USAGE STATISTICS* 📊\n\n"
-                "👥 *USER STATISTICS*\n"
-                f"Total registered users: `{total_agents}`\n"
-                f"🟢 ENL agents: `{enl_count}`\n"
-                f"🔵 RES agents: `{res_count}`\n\n"
-                "📝 *SUBMISSION STATISTICS*\n"
-                f"Total submissions: `{total_submissions}`\n"
-                f"Daily submissions: `{daily_submissions}`\n"
-                f"Weekly submissions: `{weekly_submissions}`\n"
-                f"Monthly submissions: `{monthly_submissions}`\n\n"
-                "✅ *VERIFICATION STATISTICS*\n"
-                f"⏳ Pending verifications: `{pending_verifications}`\n"
-                f"✅ Approved verifications: `{approved_verifications}`\n"
-                f"❌ Rejected verifications: `{rejected_verifications}`\n\n"
-                "👥 *GROUP STATISTICS*\n"
-                f"Total groups: `{total_groups}`\n\n"
-                "🏆 *MOST ACTIVE USERS*\n"
+                "📊 *BOT USAGE STATISTICS* 📊\\n\\n"
+                "👥 *USER STATISTICS*\\n"
+                f"Total registered users: `{escape_markdown_v2(str(total_agents))}`\\n"
+                f"🟢 ENL agents: `{escape_markdown_v2(str(enl_count))}`\\n"
+                f"🔵 RES agents: `{escape_markdown_v2(str(res_count))}`\\n\\n"
+                "📝 *SUBMISSION STATISTICS*\\n"
+                f"Total submissions: `{escape_markdown_v2(str(total_submissions))}`\\n"
+                f"Daily submissions: `{escape_markdown_v2(str(daily_submissions))}`\\n"
+                f"Weekly submissions: `{escape_markdown_v2(str(weekly_submissions))}`\\n"
+                f"Monthly submissions: `{escape_markdown_v2(str(monthly_submissions))}`\\n\\n"
+                "✅ *VERIFICATION STATISTICS*\\n"
+                f"⏳ Pending verifications: `{escape_markdown_v2(str(pending_verifications))}`\\n"
+                f"✅ Approved verifications: `{escape_markdown_v2(str(approved_verifications))}`\\n"
+                f"❌ Rejected verifications: `{escape_markdown_v2(str(rejected_verifications))}`\\n\\n"
+                "👥 *GROUP STATISTICS*\\n"
+                f"Total groups: `{escape_markdown_v2(str(total_groups))}`\\n\\n"
+                "🏆 *MOST ACTIVE USERS*\\n"
             )
             
             for i, (codename, faction, count) in enumerate(active_users, start=1):
-                stats_text += f"{i}. {codename} [{faction}] — `{count}` submissions\n"
+                stats_text += f"{escape_markdown_v2(str(i) + '.')}. {escape_markdown_v2(codename)} \\[{escape_markdown_v2(faction)}\\] — `{escape_markdown_v2(str(count))}` submissions\\n"
         
         await update.message.reply_text(stats_text, parse_mode="MarkdownV2" if not settings.text_only_mode else None)
 
@@ -2224,12 +2218,12 @@ async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         date_format_preview = datetime.now().strftime(user_setting.date_format)
         
         settings_text = (
-            f"⚙️ *Your Current Settings*\n\n"
-            f"1. Date Format: `{user_setting.date_format}` (Example: {date_format_preview})\n"
-            f"2. Number Format: `{user_setting.number_format}` (Example: 1,000)\n"
-            f"3. Leaderboard Size: `{user_setting.leaderboard_size}` (entries)\n"
-            f"4. Show Emojis: `{'Yes' if user_setting.show_emojis else 'No'}`\n\n"
-            f"Select a setting to change or type /cancel to exit."
+            f"⚙️ *Your Current Settings*\\n\\n"
+            f"1\\. Date Format: `{escape_markdown_v2(user_setting.date_format)}` \\(Example: {escape_markdown_v2(date_format_preview)}\\)\\n"
+            f"2\\. Number Format: `{escape_markdown_v2(user_setting.number_format)}` \\(Example: 1,000\\)\\n"
+            f"3\\. Leaderboard Size: `{escape_markdown_v2(str(user_setting.leaderboard_size))}` \\(entries\\)\\n"
+            f"4\\. Show Emojis: `{escape_markdown_v2('Yes' if user_setting.show_emojis else 'No')}`\\n\\n"
+            f"Select a setting to change or type /cancel to exit\\."
         )
         
         await update.message.reply_text(settings_text, parse_mode="MarkdownV2")
@@ -2469,29 +2463,29 @@ async def announce_weekly_winners(application: Application, session_factory: asy
                     # Add footer
                     announcement += "Scores have been reset for the new week. Good luck!"
                 else:
-                    # Normal mode with emojis and markdown
-                    announcement = "🏆 *Weekly Competition Results* 🏆\n\n"
+                    # Normal mode with emojis and markdown - using escape_markdown_v2 for proper escaping
+                    announcement = "🏆 *Weekly Competition Results* 🏆\\n\\n"
                     
                     # Add ENL winners
                     if enl_agents:
-                        announcement += "*🟢 Enlightened (ENL) Top Performers:*\n"
+                        announcement += "*🟢 Enlightened \\(ENL\\) Top Performers:*\\n"
                         for i, (codename, ap) in enumerate(enl_agents[:3], start=1):
-                            announcement += f"{i}. {codename} - {ap:,} AP\n"
-                        announcement += "\n"
+                            announcement += f"{escape_markdown_v2(str(i) + '.')}. {escape_markdown_v2(codename)} - {escape_markdown_v2(f'{ap:,}')} AP\\n"
+                        announcement += "\\n"
                     else:
-                        announcement += "*🟢 Enlightened (ENL):* No submissions this week\n\n"
+                        announcement += "*🟢 Enlightened \\(ENL\\):* No submissions this week\\n\\n"
                     
                     # Add RES winners
                     if res_agents:
-                        announcement += "*🔵 Resistance (RES) Top Performers:*\n"
+                        announcement += "*🔵 Resistance \\(RES\\) Top Performers:*\\n"
                         for i, (codename, ap) in enumerate(res_agents[:3], start=1):
-                            announcement += f"{i}. {codename} - {ap:,} AP\n"
-                        announcement += "\n"
+                            announcement += f"{escape_markdown_v2(str(i) + '.')}. {escape_markdown_v2(codename)} - {escape_markdown_v2(f'{ap:,}')} AP\\n"
+                        announcement += "\\n"
                     else:
-                        announcement += "*🔵 Resistance (RES):* No submissions this week\n\n"
+                        announcement += "*🔵 Resistance \\(RES\\):* No submissions this week\\n\\n"
                     
                     # Add footer
-                    announcement += "Scores have been reset for the new week. Good luck! 🍀"
+                    announcement += "Scores have been reset for the new week\\. Good luck! 🍀"
                 
                 # Send announcement to all group chats with enhanced error handling
                 successful_sends = 0
@@ -2513,7 +2507,9 @@ async def announce_weekly_winners(application: Application, session_factory: asy
                                     text=announcement
                                 )
                             else:
-                                # Normal mode with markdown
+                                # Normal mode with markdown - using escape_markdown_v2 for proper escaping
+                                # Since announcement is already formatted with proper escaping in the code above,
+                                # we don't need to escape it again here
                                 await application.bot.send_message(
                                     chat_id=setting.chat_id,
                                     text=announcement,
@@ -2736,7 +2732,7 @@ async def send_broadcast_to_all(update: Update, context: ContextTypes.DEFAULT_TY
             try:
                 await context.bot.send_message(
                     chat_id=user_id,
-                    text=f"📢 *Broadcast Message* 📢\n\n{message}",
+                    text=f"📢 *Broadcast Message* 📢\\n\\n{escape_markdown_v2(message)}",
                     parse_mode="MarkdownV2"
                 )
                 success_count += 1
