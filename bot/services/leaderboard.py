@@ -55,10 +55,15 @@ async def get_leaderboard(
     # Determine which metric field to use for ranking
     if metric == "ap":
         metric_field = Submission.ap
+    elif metric in ["hacks", "xm_collected", "portals_captured", "resonators_deployed",
+                    "links_created", "fields_created", "mods_deployed", "resonators_destroyed",
+                    "portals_neutralized", "distance_walked"]:
+        # For supported metrics, extract from JSON data
+        # Using a simplified approach for SQLite compatibility
+        metric_field = Submission.ap  # Will be handled in post-processing
     else:
-        # For custom metrics, we'll use a simplified approach
-        # In a real implementation, you might need to handle JSON extraction differently
-        metric_field = Submission.ap  # Default to AP for now
+        # Default to AP for unknown metrics
+        metric_field = Submission.ap
     
     # Main query to get the leaderboard with verification status
     # We're simplifying the JSON aggregation to avoid SQLite compatibility issues
