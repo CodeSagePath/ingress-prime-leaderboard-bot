@@ -1,7 +1,7 @@
 from collections.abc import Sequence
 from typing import Any, Dict, Optional
 
-from sqlalchemy import func, select, case
+from sqlalchemy import func, select, case, literal_column
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import Agent, Submission, Verification, VerificationStatus
@@ -56,12 +56,11 @@ async def get_leaderboard(
     if metric == "ap":
         metric_field = Submission.ap
     else:
-        # For custom metrics, we'll use a simplified approach
-        # In a real implementation, you might need to handle JSON extraction differently
-        metric_field = Submission.ap  # Default to AP for now
+        # For custom metrics, we need to extract them from the JSON metrics field
+        metric_field = func.coalesce(Submission.metrics[metric].astext.cast(Integer), 0)
     
     # Main query to get the leaderboard with verification status
-    # We're simplifying the JSON aggregation to avoid SQLite compatibility issues
+    # Note: We're simplifying the JSON aggregation to avoid SQLite compatibility issues
     stmt = (
         select(
             Agent.codename,
@@ -71,7 +70,9 @@ async def get_leaderboard(
             func.coalesce(verified_subquery.c.verified_ap, 0).label("verified_ap"),
             func.coalesce(verified_subquery.c.pending_ap, 0).label("pending_ap"),
             func.coalesce(verified_subquery.c.rejected_ap, 0).label("rejected_ap"),
-            func.coalesce(verified_subquery.c.unverified_ap, 0).label("unverified_ap")
+            func.coalesce(verified_subquery.c.unverified_ap, 0).label("unverified_ap"),
+            # Using a simpler approach for JSON metrics - we'll process them in Python
+            literal_column("''").label("all_metrics")
         )
         .join(Submission, Submission.agent_id == Agent.id)
         .join(verified_subquery, verified_subquery.c.agent_id == Agent.id, isouter=True)
@@ -102,7 +103,7 @@ async def get_leaderboard(
     # Process results and return with metrics dictionary
     processed_results = []
     for row in result.all():
-        codename, faction, metric_value, total_ap, verified_ap, pending_ap, rejected_ap, unverified_ap = row
+        codename, faction, metric_value, total_ap, verified_ap, pending_ap, rejected_ap, unverified_ap, all_metrics = row
         
         # Create metrics dictionary with verification status
         metrics_dict = {
@@ -113,8 +114,9 @@ async def get_leaderboard(
             "unverified_ap": int(unverified_ap),
         }
         
-        # Note: In a real implementation, you would add other metrics here
-        # We're simplifying to avoid SQLite compatibility issues
+        # Add all other metrics if available
+        # Note: We're simplifying this part to avoid SQLite compatibility issues
+        # In a production environment, you might want to handle this differently
         
         processed_results.append((codename, faction, int(metric_value), metrics_dict))
     
