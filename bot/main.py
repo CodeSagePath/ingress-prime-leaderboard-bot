@@ -109,6 +109,98 @@ def convert_datetime_to_iso(data):
 _ensure_agents_table()
 
 
+async def get_agent_verification_status(session_factory, agent_id: int, chat_id: int | None = None, time_span: str | None = None) -> str | None:
+    """Get the verification status of an agent."""
+    async with session_scope(session_factory) as session:
+        # Count approved submissions
+        approved_result = await session.execute(
+            select(func.count(Submission.id))
+            .join(Verification, Verification.submission_id == Submission.id)
+            .where(Submission.agent_id == agent_id)
+            .where(Verification.status == VerificationStatus.approved.value)
+        )
+        approved_count = approved_result.scalar() or 0
+
+        # Count pending submissions
+        pending_result = await session.execute(
+            select(func.count(Submission.id))
+            .join(Verification, Verification.submission_id == Submission.id)
+            .where(Submission.agent_id == agent_id)
+            .where(Verification.status == VerificationStatus.pending.value)
+        )
+        pending_count = pending_result.scalar() or 0
+
+        # Count total submissions
+        total_result = await session.execute(
+            select(func.count(Submission.id))
+            .where(Submission.agent_id == agent_id)
+        )
+        total_count = total_result.scalar() or 0
+
+        if approved_count > 0:
+            return f"✅ {approved_count} verified"
+        elif pending_count > 0:
+            return f"⏳ {pending_count} pending verification"
+        elif total_count > 0:
+            return "❌ Unverified submissions"
+        else:
+            return None
+
+
+async def get_agent_rank(session_factory, agent_id: int, time_span: str | None = None) -> int | None:
+    """Get the current rank of an agent."""
+    async with session_scope(session_factory) as session:
+        # Create a subquery to count verified submissions for each agent
+        verified_subquery = (
+            select(
+                Submission.agent_id,
+                func.sum(case(
+                    (Verification.status == VerificationStatus.approved.value, Submission.ap),
+                    else_=0
+                )).label("verified_ap"),
+                func.sum(case(
+                    (Verification.status == VerificationStatus.pending.value, Submission.ap),
+                    else_=0
+                )).label("pending_ap"),
+            )
+            .join(Verification, Verification.submission_id == Submission.id, isouter=True)
+            .group_by(Submission.agent_id)
+        ).subquery()
+
+        # Main query to get all agents ranked by AP
+        stmt = (
+            select(
+                Agent.id,
+                func.sum(Submission.ap).label("total_ap"),
+                func.coalesce(verified_subquery.c.verified_ap, 0).label("verified_ap"),
+            )
+            .join(Submission, Submission.agent_id == Agent.id)
+            .join(verified_subquery, verified_subquery.c.agent_id == Agent.id, isouter=True)
+        )
+
+        if time_span is not None:
+            stmt = stmt.where(Submission.time_span == time_span)
+
+        stmt = (
+            stmt.group_by(Agent.id)
+            .order_by(
+                func.coalesce(verified_subquery.c.verified_ap, 0).desc(),
+                func.sum(Submission.ap).desc(),
+                Agent.codename
+            )
+        )
+
+        result = await session.execute(stmt)
+        agents = result.all()
+
+        # Find the rank of the specified agent
+        for rank, (agent_id_result, _, _) in enumerate(agents, start=1):
+            if agent_id_result == agent_id:
+                return rank
+
+        return None
+
+
 def save_to_db(parsed_data: dict) -> bool:
     cycle_points = parsed_data.get("cycle_points")
     if cycle_points is not None:
@@ -881,63 +973,56 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     settings: Settings = context.application.bot_data["settings"]
     
     if settings.text_only_mode:
-        # Text-only mode for better performance on old Android devices
+        # Simplified text-only help
         help_text = (
-            "*PrimeStatsBot Help*\n\n"
-            "*User Commands:*\n"
-            "/start - Welcome message and getting started\n"
-            "/register - Register your agent with the bot\n"
-            "/submit - Submit your AP and metrics\n"
-            "/submit_data - Submit tab/space-separated data from Ingress Prime\n"
-            "/verify - Submit your stats with screenshot verification\n"
-            "/proof - Submit a screenshot as proof\n"
-            "/leaderboard - View the leaderboard\n"
-            "/myrank - Check your rank on the leaderboard\n"
-            "/top10 - View top 10 agents by cycle points\n"
-            "/top <ENL|RES> - View top 10 agents by faction\n"
-            "/lastcycle - View top agents from the last cycle\n"
-            "/lastweek - View top agents from the last 7 days\n"
-            "/settings - Configure your display settings\n"
-            "/help - Show this help message\n\n"
-            "*Group Admin Commands:*\n"
-            "/privacy <public|soft|strict> - Set group privacy mode\n\n"
-            "*Bot Admin Commands:*\n"
-            "/pending_verifications - View pending verification requests\n"
-            "/approve_verification <id> - Approve a verification request\n"
-            "/reject_verification <id> <reason> - Reject a verification request\n"
-            "/broadcast - Send a broadcast message to all users\n"
-            "/backup - Manually trigger a database backup"
+            "🤖 *PrimeStatsBot Help* 🤖\n\n"
+            "📊 *MAIN COMMANDS:*\n"
+            "• /register - Register your agent\n"
+            "• /submit <data> - Submit your stats\n"
+            "• /leaderboard - View rankings\n"
+            "• /myrank - Check your rank\n"
+            "• /verify - Submit screenshot proof\n\n"
+            "📈 *LEADERBOARD OPTIONS:*\n"
+            "• /leaderboard weekly - This week\n"
+            "• /leaderboard hacks - By hacks\n"
+            "• /leaderboard weekly hacks - Combined\n\n"
+            "🎯 *OTHER USEFUL:*\n"
+            "• /top ENL or /top RES - Faction tops\n"
+            "• /top10 - Global top 10\n"
+            "• /settings - Configure display\n"
+            "• /help - Show this help\n\n"
+            "💡 *EXAMPLES:*\n"
+            "• /submit ap=1000000 hacks=5000\n"
+            "• /myrank weekly\n"
+            "• /leaderboard xm_collected"
         )
         await update.message.reply_text(help_text)
     else:
-        # Normal mode with emojis and markdown - using escape_markdown_v2 for proper escaping
+        # Simplified normal mode help (no complex markdown)
         help_text = (
-            "🤖 *PrimeStatsBot Help* 🤖\\n\\n"
-            "*User Commands:*\\n"
-            "/start \\- Welcome message and getting started\\n"
-            "/register \\- Register your agent with the bot\\n"
-            "/submit \\- Submit your AP and metrics\\n"
-            "/submit_data \\- Submit tab/space\\-separated data from Ingress Prime\\n"
-            "/verify \\- Submit your stats with screenshot verification\\n"
-            "/proof \\- Submit a screenshot as proof\\n"
-            "/leaderboard \\- View the leaderboard\\n"
-            "/myrank \\- Check your rank on the leaderboard\\n"
-            "/top10 \\- View top 10 agents by cycle points\\n"
-            "/top <ENL\\|RES> \\- View top 10 agents by faction\\n"
-            "/lastcycle \\- View top agents from the last cycle\\n"
-            "/lastweek \\- View top agents from the last 7 days\\n"
-            "/settings \\- Configure your display settings\\n"
-            "/help \\- Show this help message\\n\\n"
-            "*Group Admin Commands:*\\n"
-            "/privacy <public\\|soft\\|strict> \\- Set group privacy mode\\n\\n"
-            "*Bot Admin Commands:*\\n"
-            "/pending_verifications \\- View pending verification requests\\n"
-            "/approve_verification <id> \\- Approve a verification request\\n"
-            "/reject_verification <id> <reason> \\- Reject a verification request\\n"
-            "/broadcast \\- Send a broadcast message to all users\\n"
-            "/backup \\- Manually trigger a database backup"
+            "🤖 *PrimeStatsBot Help* 🤖\n\n"
+            "📊 *MAIN COMMANDS:*\n"
+            "• /register - Register your agent\n"
+            "• /submit <data> - Submit your stats\n"
+            "• /leaderboard - View rankings\n"
+            "• /myrank - Check your rank\n"
+            "• /verify - Submit screenshot proof\n\n"
+            "📈 *LEADERBOARD OPTIONS:*\n"
+            "• /leaderboard weekly - This week\n"
+            "• /leaderboard hacks - By hacks\n"
+            "• /leaderboard weekly hacks - Combined\n\n"
+            "🎯 *OTHER USEFUL:*\n"
+            "• /top ENL or /top RES - Faction tops\n"
+            "• /top10 - Global top 10\n"
+            "• /settings - Configure display\n"
+            "• /help - Show this help\n\n"
+            "💡 *EXAMPLES:*\n"
+            "• /submit ap=1000000 hacks=5000\n"
+            "• /myrank weekly\n"
+            "• /leaderboard xm_collected\n\n"
+            "🔧 *ADMIN:* /privacy (groups) | /stats (admins)"
         )
-        await update.message.reply_text(help_text, parse_mode="MarkdownV2")
+        await update.message.reply_text(help_text)
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1030,7 +1115,7 @@ async def submit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     _, _, payload = text.partition(" ")
     payload = payload.strip()
     if not payload:
-        await update.message.reply_text("Usage: /submit Time Span Agent Name Agent Faction Date (yyyy-mm-dd) Time (hh:mm:ss) Level Lifetime AP Current AP Unique Portals Visited Unique Portals Drone Visited Furthest Drone Distance Portals Discovered XM Collected OPR Agreements Portal Scans Uploaded Uniques Scout Controlled Resonators Deployed Links Created Control Fields Created Mind Units Captured Longest Link Ever Created Largest Control Field XM Recharged Portals Captured Unique Portals Captured Mods Deployed Hacks Drone Hacks Glyph Hack Points Overclock Hack Points Completed Hackstreaks Longest Sojourner Streak Resonators Destroyed Portals Neutralized Enemy Links Destroyed Enemy Fields Destroyed Battle Beacon Combatant Drones Returned Machina Links Destroyed Machina Resonators Destroyed Machina Portals Neutralized Machina Portals Reclaimed Max Time Portal Held Max Time Link Maintained Max Link Length x Days Max Time Field Held Largest Field MUs x Days Forced Drone Recalls Distance Walked Kinetic Capsules Completed Unique Missions Completed Research Bounties Completed Research Days Completed First Saturday Events Second Sunday Events OPR Live Events +Delta Tokens +Delta Reso Points +Delta Field Points Recursions Months Subscribed")
+        await update.message.reply_text("Usage: /submit <your data>\n\nYou can submit data in two ways:\n\n1️⃣ *Key-value format:*\n/submit ap=170494447 xm_collected=755156240 hacks=86831\n\n2️⃣ *Ingress Prime export format:*\nCopy your stats from Ingress Prime and paste them after /submit\n\nUse /submit_data to submit tab/space-separated data with headers.")
         return
     
     # Detect the format and parse accordingly
@@ -1160,12 +1245,41 @@ async def submit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                         settings.autodelete_delay_seconds,
                     )
             else:
+                # Get current rank to provide feedback
+                current_rank = await get_agent_rank(session_factory, agent.id, time_span)
+
                 if settings.text_only_mode:
                     # Text-only mode for better performance on old Android devices
-                    await update.message.reply_text(f"Recorded {ap} AP for {agent_name} [{faction}] ({time_span}). Use /verify to submit a screenshot for verification.")
+                    rank_info = f" (Current rank: #{current_rank})" if current_rank else ""
+                    await update.message.reply_text(
+                        f"✅ Recorded {ap:,} AP for {agent_name} [{faction}] ({time_span}){rank_info}\n\n"
+                        f"📊 Key metrics from your submission:\n"
+                        f"• Hacks: {metrics.get('hacks', 'N/A'):,}\n"
+                        f"• XM Collected: {metrics.get('xm_collected', 'N/A'):,}\n"
+                        f"• Portals Captured: {metrics.get('portals_captured', 'N/A'):,}\n"
+                        f"• Resonators Deployed: {metrics.get('resonators_deployed', 'N/A'):,}\n\n"
+                        f"Use /verify to submit a screenshot for verification.\n"
+                        f"Use /leaderboard to see current rankings.\n"
+                        f"Use /myrank to check your detailed rank."
+                    )
                 else:
-                    # Normal mode with emojis
-                    await update.message.reply_text(f"✅ Recorded {ap} AP for {agent_name} [{faction}] ({time_span}). Use /verify to submit a screenshot for verification.")
+                    # Normal mode with emojis and better formatting
+                    rank_info = f" | 🏆 Current Rank: #{current_rank}" if current_rank else ""
+                    await update.message.reply_text(
+                        f"✅ Submission Recorded!{rank_info}\n\n"
+                        f"📊 Agent: {agent_name} [{faction}]\n"
+                        f"⏰ Time Span: {time_span}\n"
+                        f"💫 AP: {ap:,}\n\n"
+                        f"📈 Key Metrics:\n"
+                        f"• 🎯 Hacks: {metrics.get('hacks', 'N/A'):,}\n"
+                        f"• ✨ XM Collected: {metrics.get('xm_collected', 'N/A'):,}\n"
+                        f"• 🏢 Portals Captured: {metrics.get('portals_captured', 'N/A'):,}\n"
+                        f"• 🔋 Resonators Deployed: {metrics.get('resonators_deployed', 'N/A'):,}\n\n"
+                        f"🔍 Next Steps:\n"
+                        f"• Use /verify to submit screenshot verification\n"
+                        f"• Use /leaderboard to see current rankings\n"
+                        f"• Use /myrank to check your detailed rank"
+                    )
         else:
             if settings.text_only_mode:
                 # Text-only mode for better performance on old Android devices
@@ -1317,12 +1431,41 @@ async def submit_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                         settings.autodelete_delay_seconds,
                     )
             else:
+                # Get current rank to provide feedback
+                current_rank = await get_agent_rank(session_factory, agent.id, time_span)
+
                 if settings.text_only_mode:
                     # Text-only mode for better performance on old Android devices
-                    await update.message.reply_text(f"Recorded {ap} AP for {agent_name} [{faction}] ({time_span}). Use /verify to submit a screenshot for verification.")
+                    rank_info = f" (Current rank: #{current_rank})" if current_rank else ""
+                    await update.message.reply_text(
+                        f"✅ Recorded {ap:,} AP for {agent_name} [{faction}] ({time_span}){rank_info}\n\n"
+                        f"📊 Key metrics from your submission:\n"
+                        f"• Hacks: {metrics.get('hacks', 'N/A'):,}\n"
+                        f"• XM Collected: {metrics.get('xm_collected', 'N/A'):,}\n"
+                        f"• Portals Captured: {metrics.get('portals_captured', 'N/A'):,}\n"
+                        f"• Resonators Deployed: {metrics.get('resonators_deployed', 'N/A'):,}\n\n"
+                        f"Use /verify to submit a screenshot for verification.\n"
+                        f"Use /leaderboard to see current rankings.\n"
+                        f"Use /myrank to check your detailed rank."
+                    )
                 else:
-                    # Normal mode with emojis
-                    await update.message.reply_text(f"✅ Recorded {ap} AP for {agent_name} [{faction}] ({time_span}). Use /verify to submit a screenshot for verification.")
+                    # Normal mode with emojis and better formatting
+                    rank_info = f" | 🏆 Current Rank: #{current_rank}" if current_rank else ""
+                    await update.message.reply_text(
+                        f"✅ Submission Recorded!{rank_info}\n\n"
+                        f"📊 Agent: {agent_name} [{faction}]\n"
+                        f"⏰ Time Span: {time_span}\n"
+                        f"💫 AP: {ap:,}\n\n"
+                        f"📈 Key Metrics:\n"
+                        f"• 🎯 Hacks: {metrics.get('hacks', 'N/A'):,}\n"
+                        f"• ✨ XM Collected: {metrics.get('xm_collected', 'N/A'):,}\n"
+                        f"• 🏢 Portals Captured: {metrics.get('portals_captured', 'N/A'):,}\n"
+                        f"• 🔋 Resonators Deployed: {metrics.get('resonators_deployed', 'N/A'):,}\n\n"
+                        f"🔍 Next Steps:\n"
+                        f"• Use /verify to submit screenshot verification\n"
+                        f"• Use /leaderboard to see current rankings\n"
+                        f"• Use /myrank to check your detailed rank"
+                    )
         else:
             if settings.text_only_mode:
                 # Text-only mode for better performance on old Android devices
@@ -1431,29 +1574,42 @@ async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         lines = [header]
         for index, (codename, faction, metric_value, metrics_dict) in enumerate(rows, start=1):
             status = agent_verification_status.get(codename, "")
+            verified_ap = metrics_dict.get("verified_ap", 0)
+            total_ap = metrics_dict.get("total_ap", 0)
+
             if metric == "ap":
-                lines.append(f"{index}. {codename} [{faction}] {status} - {metric_value:,} AP")
+                verification_info = f" ({verified_ap:,} verified)" if verified_ap > 0 else " (unverified)"
+                lines.append(f"{index}. {codename} [{faction}] {status} - {metric_value:,} AP{verification_info}")
             else:
-                lines.append(f"{index}. {codename} [{faction}] {status} - {metric_value:,} {metric.upper()}")
+                lines.append(f"{index}. {codename} [{faction}] {status} - {metric_value:,} {metric.upper()} ({total_ap:,} AP total)")
+
+        # Add summary at the bottom
+        lines.append(f"\nLegend: ✅ Verified, ⏳ Pending, ❌ Unverified")
         reply = await update.message.reply_text("\n".join(lines))
     else:
-        # Normal mode with emojis and markdown - using escape_markdown_v2 for proper escaping
-        lines = [f"🏆 *{escape_markdown_v2(header)}* 🏆"]
+        # Normal mode with simplified formatting to avoid parsing errors
+        lines = [f"🏆 {header} 🏆"]
+
         for index, (codename, faction, metric_value, metrics_dict) in enumerate(rows, start=1):
             status = agent_verification_status.get(codename, "")
-            # Escape all the text content that will be sent with parse_mode="MarkdownV2"
-            escaped_index = escape_markdown_v2(str(index) + ".")
-            escaped_codename = escape_markdown_v2(codename)
-            escaped_faction = escape_markdown_v2(faction)
-            escaped_status = escape_markdown_v2(status)
-            escaped_metric_value = escape_markdown_v2(f"{metric_value:,}")
-            
+            verified_ap = metrics_dict.get("verified_ap", 0)
+            total_ap = metrics_dict.get("total_ap", 0)
+
             if metric == "ap":
-                lines.append(f"{escaped_index} {escaped_codename} \\[{escaped_faction}\\] {escaped_status} — {escaped_metric_value} AP")
+                if verified_ap > 0:
+                    verification_info = f" ({verified_ap:,} verified)"
+                else:
+                    verification_info = " (unverified)"
+                lines.append(f"{index}. {codename} [{faction}] {status} - {metric_value:,} AP{verification_info}")
             else:
-                escaped_metric_name = escape_markdown_v2(metric.upper())
-                lines.append(f"{escaped_index} {escaped_codename} \\[{escaped_faction}\\] {escaped_status} — {escaped_metric_value} {escaped_metric_name}")
-        reply = await update.message.reply_text("\n".join(lines), parse_mode="MarkdownV2")
+                lines.append(f"{index}. {codename} [{faction}] {status} - {metric_value:,} {metric.upper()} ({total_ap:,} AP total)")
+
+        # Add helpful footer
+        lines.append("")
+        lines.append("Legend: ✅ Verified | ⏳ Pending | ❌ Unverified")
+        lines.append("Tip: Use /myrank to see your detailed stats")
+
+        reply = await update.message.reply_text("\n".join(lines))
     
     # In strict mode, store messages for immediate deletion and clear submissions
     if is_group_chat and privacy_mode is GroupPrivacyMode.strict:
@@ -1572,48 +1728,180 @@ async def myrank_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         
         context_text = " ".join(context_parts)
         
+        # Get verification status and additional stats
+        verification_status = await get_agent_verification_status(session_factory, agent.id, chat_id_value, time_span)
+
         if settings.text_only_mode:
-            # Text-only mode for better performance on old Android devices
-            response = f"{context_text} is #{rank}\n"
+            # Enhanced text-only mode with more information
+            response = f"🏆 Your Rank {context_text}: #{rank}\n\n"
+            response += f"📊 Agent: {agent.codename} [{agent.faction}]\n"
+
             if metric == "ap":
-                response += f"{agent.codename} [{agent.faction}] - {int(agent_metric_value):,} AP"
+                response += f"💫 AP: {int(agent_metric_value):,}\n"
             else:
-                response += f"{agent.codename} [{agent.faction}] - {int(agent_metric_value):,} {metric.upper()}"
+                response += f"📈 {metric.upper()}: {int(agent_metric_value):,}\n"
+
+            # Add verification status
+            if verification_status:
+                response += f"🔍 Verification: {verification_status}\n"
+
+            # Add rank comparison
+            if rank <= 10:
+                response += f"🎯 Top 10! Great job!\n"
+            elif rank <= 100:
+                response += f"🌟 Top 100 - Keep going!\n"
+
+            response += f"\n💡 Tip: Use /leaderboard to see full rankings"
             await update.message.reply_text(response)
             return
-        # Normal mode with emojis and markdown - using escape_markdown_v2 for proper escaping
-        response = f"{escape_markdown_v2(context_text)} is *#{escape_markdown_v2(str(rank))}*\n"
+
+        # Enhanced normal mode with simplified formatting
+        response = f"🏆 Your Rank {context_text}: #{rank}\n\n"
+        response += f"📊 Agent: {agent.codename} [{agent.faction}]\n"
+
         if metric == "ap":
-            response += f"{escape_markdown_v2(agent.codename)} \\[{escape_markdown_v2(agent.faction)}\\] — {escape_markdown_v2(str(int(agent_metric_value)))} AP"
+            response += f"💫 AP: {int(agent_metric_value):,}\n"
         else:
-            response += f"{escape_markdown_v2(agent.codename)} \\[{escape_markdown_v2(agent.faction)}\\] — {escape_markdown_v2(str(int(agent_metric_value)))} {escape_markdown_v2(metric.upper())}"
-        await update.message.reply_text(response, parse_mode="MarkdownV2")
+            response += f"📈 {metric.upper()}: {int(agent_metric_value):,}\n"
+
+        # Add verification status
+        if verification_status:
+            response += f"🔍 Verification: {verification_status}\n"
+
+        # Add achievement badges
+        if rank <= 10:
+            response += f"🎯 Top 10 Agent!\n"
+        elif rank <= 100:
+            response += f"🌟 Top 100 Performer\n"
+
+        response += f"\n💡 Pro tip: Use /leaderboard to see full rankings"
+
+        await update.message.reply_text(response)
 
 
 async def top10_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.message:
         return
+
+    # Use the same data as regular leaderboard for consistency
     settings: Settings = context.application.bot_data["settings"]
-    rows = await _fetch_cycle_leaderboard(10)
-    await _send_cycle_leaderboard(update, settings, rows, "Top 10 agents by cycle points")
+    session_factory = context.application.bot_data["session_factory"]
+
+    async with session_scope(session_factory) as session:
+        rows = await get_leaderboard(
+            session,
+            10,  # Limit to top 10
+            None,  # No chat filter
+            None,  # No time span filter
+            "ap"   # Default to AP
+        )
+
+    if not rows:
+        await update.message.reply_text("No submissions yet.")
+        return
+
+    # Format response
+    lines = ["🏆 Top 10 agents by AP 🏆"]
+
+    for index, (codename, faction, metric_value, metrics_dict) in enumerate(rows, start=1):
+        verified_ap = metrics_dict.get("verified_ap", 0)
+
+        # Simple verification status
+        if verified_ap > 0:
+            status = "✅"
+        else:
+            status = "⏳"
+
+        lines.append(f"{index}. {codename} [{faction}] {status} - {metric_value:,} AP")
+
+    lines.append("")
+    lines.append("Legend: ✅ Verified | ⏳ Pending")
+
+    await update.message.reply_text("\n".join(lines))
 
 
 async def top_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.message:
         return
-    args = getattr(context, "args", [])
-    if not args:
-        await update.message.reply_text("Usage: /top <ENL|RES>.")
-        return
-    faction_arg = args[0].upper()
-    faction_code = FACTION_ALIASES.get(faction_arg, faction_arg if faction_arg in {"ENL", "RES"} else None)
-    if faction_code not in {"ENL", "RES"}:
-        await update.message.reply_text("Usage: /top <ENL|RES>.")
-        return
+
     settings: Settings = context.application.bot_data["settings"]
-    rows = await _fetch_cycle_leaderboard(10, faction=faction_code)
-    faction_label = FACTION_DISPLAY_NAMES.get(faction_code, faction_code)
-    await _send_cycle_leaderboard(update, settings, rows, f"Top 10 {faction_label} agents by cycle points")
+    session_factory = context.application.bot_data["session_factory"]
+    args = getattr(context, "args", [])
+
+    # Default: show top 10 overall if no arguments
+    faction_filter = None
+    time_span = None
+    metric = "ap"
+
+    if args:
+        # Check if first argument is a faction
+        first_arg = args[0].upper()
+        if first_arg in {"ENL", "RES"}:
+            faction_filter = FACTION_DISPLAY_NAMES.get(first_arg, first_arg)
+            # Check for additional arguments
+            if len(args) > 1:
+                if args[1].upper() in TIME_SPAN_ALIASES:
+                    time_span = TIME_SPAN_ALIASES[args[1].upper()]
+                    if len(args) > 2:
+                        metric = args[2].lower()
+                else:
+                    metric = args[1].lower()
+
+    # Get leaderboard data
+    async with session_scope(session_factory) as session:
+        rows = await get_leaderboard(
+            session,
+            10,  # Limit to top 10
+            None,  # No chat filter
+            time_span=time_span,
+            metric=metric
+        )
+
+        # Filter by faction if specified
+        if faction_filter:
+            filtered_rows = [(codename, faction, metric_value, metrics_dict)
+                           for codename, faction, metric_value, metrics_dict in rows
+                           if faction.upper() == faction_filter.upper()]
+            rows = filtered_rows
+
+    if not rows:
+        if faction_filter:
+            await update.message.reply_text(f"No {faction_filter} agents found for this criteria.")
+        else:
+            await update.message.reply_text("No submissions yet.")
+        return
+
+    # Format response similar to leaderboard but limited to top 10
+    header_parts = ["Top 10"]
+    if faction_filter:
+        header_parts.append(faction_filter)
+    if time_span:
+        header_parts.append(f"({time_span})")
+    if metric != "ap":
+        header_parts.append(f"by {metric.upper()}")
+
+    header = " ".join(header_parts)
+
+    lines = [f"🏆 {header} 🏆"]
+
+    for index, (codename, faction, metric_value, metrics_dict) in enumerate(rows, start=1):
+        verified_ap = metrics_dict.get("verified_ap", 0)
+
+        # Simple verification status
+        if verified_ap > 0:
+            status = "✅"
+        else:
+            status = "⏳"
+
+        if metric == "ap":
+            lines.append(f"{index}. {codename} [{faction}] {status} - {metric_value:,} AP")
+        else:
+            lines.append(f"{index}. {codename} [{faction}] {status} - {metric_value:,} {metric.upper()}")
+
+    lines.append("")
+    lines.append("Legend: ✅ Verified | ⏳ Pending")
+
+    await update.message.reply_text("\n".join(lines))
 
 
 async def last_cycle_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -2827,6 +3115,22 @@ async def send_broadcast_to_all(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 def configure_handlers(application: Application) -> None:
+    # Add error handling for all commands
+    async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Log errors and notify users."""
+        logger.error(f"Exception while handling an update: {context.error}")
+
+        # Try to notify the user about the error
+        if update and hasattr(update, 'message') and update.message:
+            try:
+                await update.message.reply_text(
+                    "❌ Sorry, something went wrong while processing your command. "
+                    "Please try again or contact an admin if the problem persists."
+                )
+            except Exception:
+                pass  # Ignore errors in error handling
+
+    application.add_error_handler(error_handler)
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
     register_handler = ConversationHandler(
