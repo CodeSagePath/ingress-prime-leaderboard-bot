@@ -151,3 +151,22 @@ class Verification(Base):
         Index('idx_verification_status_created', 'status', 'created_at'),
         Index('idx_verification_submission', 'submission_id'),
     )
+
+
+class UserSetting(Base):
+    __tablename__ = "user_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    telegram_id: Mapped[int] = mapped_column(BigInteger, nullable=False, unique=True, index=True)
+    date_format: Mapped[str] = mapped_column(String(32), nullable=False, default="%Y-%m-%d")
+    number_format: Mapped[str] = mapped_column(String(8), nullable=False, default="comma")
+    leaderboard_size: Mapped[int] = mapped_column(Integer, nullable=False, default=10)
+    show_emojis: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        CheckConstraint("number_format IN ('comma', 'dot', 'space')", name="user_settings_number_format_check"),
+        CheckConstraint("leaderboard_size > 0 AND leaderboard_size <= 50", name="user_settings_leaderboard_size_check"),
+        Index('idx_user_settings_telegram', 'telegram_id'),
+    )

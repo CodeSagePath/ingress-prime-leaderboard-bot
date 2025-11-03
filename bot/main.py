@@ -4,6 +4,7 @@ import logging
 import sqlite3
 import re
 from datetime import datetime, timedelta, timezone
+import json
 from pathlib import Path
 from typing import Any
 from itertools import combinations
@@ -33,7 +34,7 @@ from .dashboard import create_dashboard_app
 from .database import build_engine, build_session_factory, init_models, session_scope
 from .jobs.deletion import cleanup_expired_group_messages, schedule_message_deletion
 from .jobs.backup import perform_backup, manual_backup_command
-from .models import Agent, GroupMessage, GroupPrivacyMode, GroupSetting, PendingAction, Submission, WeeklyStat, Verification, VerificationStatus
+from .models import Agent, GroupMessage, GroupPrivacyMode, GroupSetting, PendingAction, Submission, WeeklyStat, Verification, VerificationStatus, UserSetting
 from .services.leaderboard import get_leaderboard
 
 logger = logging.getLogger(__name__)
@@ -59,6 +60,26 @@ def _ensure_agents_table() -> None:
             """
         )
         connection.commit()
+
+
+def convert_datetime_to_iso(data):
+    """
+    Recursively convert datetime objects to ISO format strings in a dictionary.
+    
+    Args:
+        data: The data to process (dict, list, or any other type)
+        
+    Returns:
+        The data with datetime objects converted to ISO format strings
+    """
+    if isinstance(data, dict):
+        return {key: convert_datetime_to_iso(value) for key, value in data.items()}
+    elif isinstance(data, list):
+        return [convert_datetime_to_iso(item) for item in data]
+    elif isinstance(data, datetime):
+        return data.isoformat()
+    else:
+        return data
 
 
 _ensure_agents_table()
@@ -348,6 +369,9 @@ FACTION_DISPLAY_NAMES = {
 
 CODENAME, FACTION = range(2)
 VERIFY_SUBMIT, VERIFY_SCREENSHOT = range(2)
+PROOF_SCREENSHOT = range(1)
+SETTINGS_MENU, SETTINGS_SELECT, SETTINGS_VALUE = range(3)
+BROADCAST_MESSAGE, BROADCAST_CONFIRM = range(2)
 
 
 def parse_submission(payload: str) -> tuple[int, dict[str, Any]]:
@@ -770,6 +794,73 @@ async def handle_ingress_message(update: Update, context: ContextTypes.DEFAULT_T
     await message.reply_text("✅ Data recorded")
 
 
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Display help message with all available commands."""
+    if not update.message:
+        return
+    
+    settings: Settings = context.application.bot_data["settings"]
+    
+    if settings.text_only_mode:
+        # Text-only mode for better performance on old Android devices
+        help_text = (
+            "*PrimeStatsBot Help*\n\n"
+            "*User Commands:*\n"
+            "/start - Welcome message and getting started\n"
+            "/register - Register your agent with the bot\n"
+            "/submit - Submit your AP and metrics\n"
+            "/submit_data - Submit tab/space-separated data from Ingress Prime\n"
+            "/verify - Submit your stats with screenshot verification\n"
+            "/proof - Submit a screenshot as proof\n"
+            "/leaderboard - View the leaderboard\n"
+            "/myrank - Check your rank on the leaderboard\n"
+            "/top10 - View top 10 agents by cycle points\n"
+            "/top <ENL|RES> - View top 10 agents by faction\n"
+            "/lastcycle - View top agents from the last cycle\n"
+            "/lastweek - View top agents from the last 7 days\n"
+            "/settings - Configure your display settings\n"
+            "/help - Show this help message\n\n"
+            "*Group Admin Commands:*\n"
+            "/privacy <public|soft|strict> - Set group privacy mode\n\n"
+            "*Bot Admin Commands:*\n"
+            "/pending_verifications - View pending verification requests\n"
+            "/approve_verification <id> - Approve a verification request\n"
+            "/reject_verification <id> <reason> - Reject a verification request\n"
+            "/broadcast - Send a broadcast message to all users\n"
+            "/backup - Manually trigger a database backup"
+        )
+    else:
+        # Normal mode with emojis and markdown
+        help_text = (
+            "🤖 *PrimeStatsBot Help* 🤖\n\n"
+            "*User Commands:*\n"
+            "/start - Welcome message and getting started\n"
+            "/register - Register your agent with the bot\n"
+            "/submit - Submit your AP and metrics\n"
+            "/submit_data - Submit tab/space-separated data from Ingress Prime\n"
+            "/verify - Submit your stats with screenshot verification\n"
+            "/proof - Submit a screenshot as proof\n"
+            "/leaderboard - View the leaderboard\n"
+            "/myrank - Check your rank on the leaderboard\n"
+            "/top10 - View top 10 agents by cycle points\n"
+            "/top <ENL|RES> - View top 10 agents by faction\n"
+            "/lastcycle - View top agents from the last cycle\n"
+            "/lastweek - View top agents from the last 7 days\n"
+            "/settings - Configure your display settings\n"
+            "/help - Show this help message\n\n"
+            "*Group Admin Commands:*\n"
+            "/privacy <public|soft|strict> - Set group privacy mode\n\n"
+            "*Bot Admin Commands:*\n"
+            "/pending_verifications - View pending verification requests\n"
+            "/approve_verification <id> - Approve a verification request\n"
+            "/reject_verification <id> <reason> - Reject a verification request\n"
+            "/broadcast - Send a broadcast message to all users\n"
+            "/backup - Manually trigger a database backup"
+        )
+    
+    await update.message.reply_text(help_text, parse_mode="MarkdownV2")
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.message:
         return
@@ -860,7 +951,7 @@ async def submit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     _, _, payload = text.partition(" ")
     payload = payload.strip()
     if not payload:
-        await update.message.reply_text("Usage: /submit ap=12345; metric=678 or paste tab/space-separated data from Ingress Prime")
+        await update.message.reply_text("Usage: /submit Time Span Agent Name Agent Faction Date (yyyy-mm-dd) Time (hh:mm:ss) Level Lifetime AP Current AP Unique Portals Visited Unique Portals Drone Visited Furthest Drone Distance Portals Discovered XM Collected OPR Agreements Portal Scans Uploaded Uniques Scout Controlled Resonators Deployed Links Created Control Fields Created Mind Units Captured Longest Link Ever Created Largest Control Field XM Recharged Portals Captured Unique Portals Captured Mods Deployed Hacks Drone Hacks Glyph Hack Points Overclock Hack Points Completed Hackstreaks Longest Sojourner Streak Resonators Destroyed Portals Neutralized Enemy Links Destroyed Enemy Fields Destroyed Battle Beacon Combatant Drones Returned Machina Links Destroyed Machina Resonators Destroyed Machina Portals Neutralized Machina Portals Reclaimed Max Time Portal Held Max Time Link Maintained Max Link Length x Days Max Time Field Held Largest Field MUs x Days Forced Drone Recalls Distance Walked Kinetic Capsules Completed Unique Missions Completed Research Bounties Completed Research Days Completed First Saturday Events Second Sunday Events OPR Live Events +Delta Tokens +Delta Reso Points +Delta Field Points Recursions Months Subscribed")
         return
     
     # Detect the format and parse accordingly
@@ -917,7 +1008,7 @@ async def submit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if existing_submission:
             # Update the existing submission
             existing_submission.ap = ap
-            existing_submission.metrics = metrics
+            existing_submission.metrics = convert_datetime_to_iso(metrics)
             existing_submission.time_span = time_span
             existing_submission.submitted_at = datetime.now(timezone.utc)
             submission = existing_submission
@@ -934,7 +1025,7 @@ async def submit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 agent_id=agent.id,
                 chat_id=chat_id_value,
                 ap=ap,
-                metrics=metrics,
+                metrics=convert_datetime_to_iso(metrics),
                 time_span=time_span
             )
             session.add(submission)
@@ -1073,7 +1164,7 @@ async def submit_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         if existing_submission:
             # Update the existing submission
             existing_submission.ap = ap
-            existing_submission.metrics = metrics
+            existing_submission.metrics = convert_datetime_to_iso(metrics)
             existing_submission.time_span = time_span
             existing_submission.submitted_at = datetime.now(timezone.utc)
             submission = existing_submission
@@ -1090,7 +1181,7 @@ async def submit_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 agent_id=agent.id,
                 chat_id=chat_id_value,
                 ap=ap,
-                metrics=metrics,
+                metrics=convert_datetime_to_iso(metrics),
                 time_span=time_span
             )
             session.add(submission)
@@ -1664,7 +1755,7 @@ async def verify_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         if existing_submission:
             # Update the existing submission
             existing_submission.ap = ap
-            existing_submission.metrics = metrics
+            existing_submission.metrics = convert_datetime_to_iso(metrics)
             existing_submission.time_span = time_span
             existing_submission.submitted_at = datetime.now(timezone.utc)
             
@@ -1688,7 +1779,7 @@ async def verify_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                 agent_id=agent.id,
                 chat_id=chat_id_value,
                 ap=ap,
-                metrics=metrics,
+                metrics=convert_datetime_to_iso(metrics),
                 time_span=time_span
             )
             session.add(submission)
@@ -1714,6 +1805,94 @@ async def verify_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     if update.message:
         await update.message.reply_text("Verification process cancelled.")
     context.user_data.clear()
+    return ConversationHandler.END
+
+
+async def proof_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Start the proof process by asking for a screenshot."""
+    if not update.message or not update.effective_user:
+        return ConversationHandler.END
+    
+    # Get the optional database path from command arguments
+    args = context.args
+    db_path = args[0] if args else None
+    
+    # Store the database path in user context for later use
+    if db_path:
+        context.user_data["proof_db_path"] = db_path
+        await update.message.reply_text(f"Please send a screenshot as proof for database path: {db_path}")
+    else:
+        context.user_data["proof_db_path"] = None
+        await update.message.reply_text("Please send a screenshot as proof.")
+    
+    return PROOF_SCREENSHOT
+
+
+async def proof_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Process the screenshot and save it with metadata."""
+    if not update.message or not update.effective_user:
+        return ConversationHandler.END
+    
+    # Check if the message contains a photo
+    if not update.message.photo:
+        await update.message.reply_text("Please send a photo as a screenshot.")
+        return PROOF_SCREENSHOT
+    
+    # Get the database path from user context
+    db_path = context.user_data.get("proof_db_path")
+    
+    # Get the highest resolution photo
+    photo = update.message.photo[-1]
+    file = await context.bot.get_file(photo.file_id)
+    
+    # Generate a unique filename for the screenshot
+    import uuid
+    import os
+    screenshot_filename = f"proofs/{uuid.uuid4()}.jpg"
+    
+    # Create the proofs directory if it doesn't exist
+    os.makedirs("proofs", exist_ok=True)
+    
+    # Download the screenshot
+    await file.download_to_drive(screenshot_filename)
+    
+    # Get the agent
+    session_factory = context.application.bot_data["session_factory"]
+    async with session_scope(session_factory) as session:
+        result = await session.execute(select(Agent).where(Agent.telegram_id == update.effective_user.id))
+        agent = result.scalar_one_or_none()
+        
+        if not agent:
+            await update.message.reply_text("Register first with /register.")
+            return ConversationHandler.END
+        
+        # Create a verification record for the proof
+        verification = Verification(
+            submission_id=None,  # No submission associated with proof
+            screenshot_path=screenshot_filename,
+            status=VerificationStatus.pending.value
+        )
+        session.add(verification)
+        await session.flush()  # Get the verification ID
+        
+        # Create a pending action to track the proof with metadata
+        pending_action = PendingAction(
+            action=f"proof_{verification.id}",
+            chat_id=update.effective_chat.id if update.effective_chat else None,
+            message_id=update.message.message_id,
+            executed=False
+        )
+        session.add(pending_action)
+    
+    # Clear user context
+    context.user_data.clear()
+    
+    # Format the response message
+    if db_path:
+        await update.message.reply_text(f"Your proof for database path '{db_path}' has been uploaded successfully (ID: {verification.id}). It is pending review.")
+    else:
+        await update.message.reply_text(f"Your proof has been uploaded successfully (ID: {verification.id}). It is pending review.")
+    
     return ConversationHandler.END
 
 
@@ -1873,6 +2052,331 @@ async def reject_verification(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text(
             f"Verification request ID {verification_id} for {agent.codename} [{agent.faction}] with {submission.ap} AP has been rejected."
         )
+
+
+async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Display usage statistics (admin only)."""
+    if not update.message or not update.effective_user:
+        return
+    
+    settings: Settings = context.application.bot_data["settings"]
+    
+    # Check if the user is an admin
+    if update.effective_user.id not in settings.admin_user_ids:
+        await update.message.reply_text("You don't have permission to use this command.")
+        return
+    
+    session_factory = context.application.bot_data["session_factory"]
+    
+    async with session_scope(session_factory) as session:
+        # Get total number of registered users
+        agents_result = await session.execute(select(func.count(Agent.id)))
+        total_agents = agents_result.scalar()
+        
+        # Get total number of submissions
+        submissions_result = await session.execute(select(func.count(Submission.id)))
+        total_submissions = submissions_result.scalar()
+        
+        # Get submissions by time period
+        now = datetime.now(timezone.utc)
+        
+        # Daily submissions
+        day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        daily_result = await session.execute(
+            select(func.count(Submission.id)).where(Submission.submitted_at >= day_start)
+        )
+        daily_submissions = daily_result.scalar()
+        
+        # Weekly submissions
+        week_start = day_start - timedelta(days=now.weekday())
+        weekly_result = await session.execute(
+            select(func.count(Submission.id)).where(Submission.submitted_at >= week_start)
+        )
+        weekly_submissions = weekly_result.scalar()
+        
+        # Monthly submissions
+        month_start = day_start.replace(day=1)
+        monthly_result = await session.execute(
+            select(func.count(Submission.id)).where(Submission.submitted_at >= month_start)
+        )
+        monthly_submissions = monthly_result.scalar()
+        
+        # Get most active users (by submission count)
+        active_users_result = await session.execute(
+            select(Agent.codename, Agent.faction, func.count(Submission.id).label("submission_count"))
+            .join(Submission, Agent.id == Submission.agent_id)
+            .group_by(Agent.id)
+            .order_by(func.count(Submission.id).desc())
+            .limit(5)
+        )
+        active_users = active_users_result.all()
+        
+        # Get verification statistics
+        pending_result = await session.execute(
+            select(func.count(Verification.id))
+            .where(Verification.status == VerificationStatus.pending.value)
+        )
+        pending_verifications = pending_result.scalar()
+        
+        approved_result = await session.execute(
+            select(func.count(Verification.id))
+            .where(Verification.status == VerificationStatus.approved.value)
+        )
+        approved_verifications = approved_result.scalar()
+        
+        rejected_result = await session.execute(
+            select(func.count(Verification.id))
+            .where(Verification.status == VerificationStatus.rejected.value)
+        )
+        rejected_verifications = rejected_result.scalar()
+        
+        # Get faction distribution
+        enl_result = await session.execute(
+            select(func.count(Agent.id)).where(Agent.faction == "ENL")
+        )
+        enl_count = enl_result.scalar()
+        
+        res_result = await session.execute(
+            select(func.count(Agent.id)).where(Agent.faction == "RES")
+        )
+        res_count = res_result.scalar()
+        
+        # Get group statistics
+        groups_result = await session.execute(select(func.count(GroupSetting.id)))
+        total_groups = groups_result.scalar()
+        
+        # Format the statistics message
+        if settings.text_only_mode:
+            # Text-only mode for better performance on old Android devices
+            stats_text = (
+                "BOT USAGE STATISTICS\n\n"
+                "USER STATISTICS\n"
+                f"Total registered users: {total_agents}\n"
+                f"ENL agents: {enl_count}\n"
+                f"RES agents: {res_count}\n\n"
+                "SUBMISSION STATISTICS\n"
+                f"Total submissions: {total_submissions}\n"
+                f"Daily submissions: {daily_submissions}\n"
+                f"Weekly submissions: {weekly_submissions}\n"
+                f"Monthly submissions: {monthly_submissions}\n\n"
+                "VERIFICATION STATISTICS\n"
+                f"Pending verifications: {pending_verifications}\n"
+                f"Approved verifications: {approved_verifications}\n"
+                f"Rejected verifications: {rejected_verifications}\n\n"
+                "GROUP STATISTICS\n"
+                f"Total groups: {total_groups}\n\n"
+                "MOST ACTIVE USERS\n"
+            )
+            
+            for i, (codename, faction, count) in enumerate(active_users, start=1):
+                stats_text += f"{i}. {codename} [{faction}] - {count} submissions\n"
+        else:
+            # Normal mode with emojis and markdown
+            stats_text = (
+                "📊 *BOT USAGE STATISTICS* 📊\n\n"
+                "👥 *USER STATISTICS*\n"
+                f"Total registered users: `{total_agents}`\n"
+                f"🟢 ENL agents: `{enl_count}`\n"
+                f"🔵 RES agents: `{res_count}`\n\n"
+                "📝 *SUBMISSION STATISTICS*\n"
+                f"Total submissions: `{total_submissions}`\n"
+                f"Daily submissions: `{daily_submissions}`\n"
+                f"Weekly submissions: `{weekly_submissions}`\n"
+                f"Monthly submissions: `{monthly_submissions}`\n\n"
+                "✅ *VERIFICATION STATISTICS*\n"
+                f"⏳ Pending verifications: `{pending_verifications}`\n"
+                f"✅ Approved verifications: `{approved_verifications}`\n"
+                f"❌ Rejected verifications: `{rejected_verifications}`\n\n"
+                "👥 *GROUP STATISTICS*\n"
+                f"Total groups: `{total_groups}`\n\n"
+                "🏆 *MOST ACTIVE USERS*\n"
+            )
+            
+            for i, (codename, faction, count) in enumerate(active_users, start=1):
+                stats_text += f"{i}. {codename} [{faction}] — `{count}` submissions\n"
+        
+        await update.message.reply_text(stats_text, parse_mode="MarkdownV2" if not settings.text_only_mode else None)
+
+
+async def _get_or_create_user_setting(session: AsyncSession, telegram_id: int) -> UserSetting:
+    """Get existing user settings or create new ones if they don't exist."""
+    result = await session.execute(select(UserSetting).where(UserSetting.telegram_id == telegram_id))
+    setting = result.scalar_one_or_none()
+    
+    if setting is None:
+        setting = UserSetting(telegram_id=telegram_id)
+        session.add(setting)
+        await session.flush()
+    
+    return setting
+
+
+async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Start the settings configuration conversation."""
+    if not update.message or not update.effective_user:
+        return ConversationHandler.END
+    
+    session_factory = context.application.bot_data["session_factory"]
+    async with session_scope(session_factory) as session:
+        user_setting = await _get_or_create_user_setting(session, update.effective_user.id)
+        
+        # Format current settings for display
+        date_format_preview = datetime.now().strftime(user_setting.date_format)
+        
+        settings_text = (
+            f"⚙️ *Your Current Settings*\n\n"
+            f"1. Date Format: `{user_setting.date_format}` (Example: {date_format_preview})\n"
+            f"2. Number Format: `{user_setting.number_format}` (Example: 1,000)\n"
+            f"3. Leaderboard Size: `{user_setting.leaderboard_size}` (entries)\n"
+            f"4. Show Emojis: `{'Yes' if user_setting.show_emojis else 'No'}`\n\n"
+            f"Select a setting to change or type /cancel to exit."
+        )
+        
+        await update.message.reply_text(settings_text, parse_mode="MarkdownV2")
+        return SETTINGS_MENU
+
+
+async def settings_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Handle selection of a setting to change."""
+    if not update.message:
+        return ConversationHandler.END
+    
+    text = update.message.text.strip()
+    
+    # Check if the user wants to cancel
+    if text.lower() == "/cancel":
+        await update.message.reply_text("Settings configuration cancelled.")
+        return ConversationHandler.END
+    
+    # Map user input to setting options
+    setting_options = {
+        "1": "date_format",
+        "2": "number_format",
+        "3": "leaderboard_size",
+        "4": "show_emojis"
+    }
+    
+    if text not in setting_options:
+        await update.message.reply_text("Please select a valid option (1-4) or type /cancel to exit.")
+        return SETTINGS_MENU
+    
+    # Store the selected setting in user context
+    context.user_data["selected_setting"] = setting_options[text]
+    
+    # Provide guidance for the selected setting
+    if text == "1":  # Date format
+        await update.message.reply_text(
+            "Enter your preferred date format.\n"
+            "Common formats:\n"
+            "- `%Y-%m-%d` (2023-12-31)\n"
+            "- `%d/%m/%Y` (31/12/2023)\n"
+            "- `%m/%d/%Y` (12/31/2023)\n"
+            "- `%b %d, %Y` (Dec 31, 2023)\n\n"
+            "Use Python strftime codes for custom formats."
+        )
+    elif text == "2":  # Number format
+        await update.message.reply_text(
+            "Enter your preferred number format:\n"
+            "- `comma` (1,000)\n"
+            "- `dot` (1.000)\n"
+            "- `space` (1 000)"
+        )
+    elif text == "3":  # Leaderboard size
+        await update.message.reply_text(
+            "Enter leaderboard size (1-50):"
+        )
+    elif text == "4":  # Show emojis
+        await update.message.reply_text(
+            "Enter whether to show emojis:\n"
+            "- `yes` or `true` to enable\n"
+            "- `no` or `false` to disable"
+        )
+    
+    return SETTINGS_VALUE
+
+
+async def settings_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Process the new value for the selected setting."""
+    if not update.message:
+        return ConversationHandler.END
+    
+    selected_setting = context.user_data.get("selected_setting")
+    if not selected_setting:
+        await update.message.reply_text("Error: No setting selected. Please start over with /settings.")
+        return ConversationHandler.END
+    
+    new_value = update.message.text.strip()
+    session_factory = context.application.bot_data["session_factory"]
+    
+    async with session_scope(session_factory) as session:
+        user_setting = await _get_or_create_user_setting(session, update.effective_user.id)
+        
+        try:
+            if selected_setting == "date_format":
+                # Validate date format by trying to format current date
+                try:
+                    datetime.now().strftime(new_value)
+                    user_setting.date_format = new_value
+                    date_format_preview = datetime.now().strftime(new_value)
+                    response = f"✅ Date format updated to: `{new_value}` (Example: {date_format_preview})"
+                except (ValueError, TypeError):
+                    await update.message.reply_text("Invalid date format. Please try again or type /cancel to exit.")
+                    return SETTINGS_VALUE
+            
+            elif selected_setting == "number_format":
+                # Validate number format
+                if new_value not in ["comma", "dot", "space"]:
+                    await update.message.reply_text("Invalid number format. Please use 'comma', 'dot', or 'space' or type /cancel to exit.")
+                    return SETTINGS_VALUE
+                user_setting.number_format = new_value
+                response = f"✅ Number format updated to: `{new_value}`"
+            
+            elif selected_setting == "leaderboard_size":
+                # Validate leaderboard size
+                try:
+                    size = int(new_value)
+                    if not (1 <= size <= 50):
+                        await update.message.reply_text("Leaderboard size must be between 1 and 50. Please try again or type /cancel to exit.")
+                        return SETTINGS_VALUE
+                    user_setting.leaderboard_size = size
+                    response = f"✅ Leaderboard size updated to: `{size}` entries"
+                except ValueError:
+                    await update.message.reply_text("Invalid number. Please enter a number between 1 and 50 or type /cancel to exit.")
+                    return SETTINGS_VALUE
+            
+            elif selected_setting == "show_emojis":
+                # Parse boolean value
+                if new_value.lower() in ["yes", "true", "1", "on"]:
+                    user_setting.show_emojis = True
+                    response = "✅ Emojis enabled"
+                elif new_value.lower() in ["no", "false", "0", "off"]:
+                    user_setting.show_emojis = False
+                    response = "✅ Emojis disabled"
+                else:
+                    await update.message.reply_text("Invalid value. Please use 'yes', 'no', 'true', or 'false' or type /cancel to exit.")
+                    return SETTINGS_VALUE
+            
+            # Update the timestamp
+            user_setting.updated_at = datetime.now(timezone.utc)
+            
+            # Send confirmation
+            await update.message.reply_text(response + "\n\nType /settings to configure more settings or /cancel to exit.")
+            
+        except Exception as e:
+            logger.error(f"Error updating user settings: {e}")
+            await update.message.reply_text("An error occurred while updating your settings. Please try again.")
+    
+    # Clear user context and end conversation
+    context.user_data.clear()
+    return ConversationHandler.END
+
+
+async def settings_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Cancel the settings configuration process."""
+    if update.message:
+        await update.message.reply_text("Settings configuration cancelled.")
+    context.user_data.clear()
+    return ConversationHandler.END
 
 
 async def announce_weekly_winners(application: Application, session_factory: async_sessionmaker, week_start: datetime, week_end: datetime) -> None:
@@ -2130,8 +2634,126 @@ async def reset_weekly_scores(application: Application, session_factory: async_s
         raise
 
 
+async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Start the broadcast conversation (admin only)."""
+    if not update.message or not update.effective_user:
+        return ConversationHandler.END
+    
+    settings: Settings = context.application.bot_data["settings"]
+    
+    # Check if the user is an admin
+    if update.effective_user.id not in settings.admin_user_ids:
+        await update.message.reply_text("You don't have permission to use this command.")
+        return ConversationHandler.END
+    
+    await update.message.reply_text("Please send the message you want to broadcast to all users.")
+    return BROADCAST_MESSAGE
+
+
+async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Process the broadcast message and ask for confirmation."""
+    if not update.message:
+        return ConversationHandler.END
+    
+    # Store the broadcast message in user context
+    context.user_data["broadcast_message"] = update.message.text or update.message.caption or ""
+    
+    if not context.user_data["broadcast_message"].strip():
+        await update.message.reply_text("Message cannot be empty. Please send a valid message.")
+        return BROADCAST_MESSAGE
+    
+    # Show preview and ask for confirmation
+    preview = context.user_data["broadcast_message"]
+    await update.message.reply_text(
+        f"Broadcast message preview:\n\n{preview}\n\n"
+        "Send this message to all registered users? (yes/no)"
+    )
+    return BROADCAST_CONFIRM
+
+
+async def broadcast_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Confirm and send the broadcast message to all users."""
+    if not update.message:
+        return ConversationHandler.END
+    
+    response = update.message.text.strip().lower()
+    
+    if response not in ["yes", "y"]:
+        await update.message.reply_text("Broadcast cancelled.")
+        context.user_data.clear()
+        return ConversationHandler.END
+    
+    message = context.user_data.get("broadcast_message", "")
+    if not message:
+        await update.message.reply_text("Error: No message found. Please start over with /broadcast.")
+        context.user_data.clear()
+        return ConversationHandler.END
+    
+    # Send the broadcast to all users
+    success_count, failure_count = await send_broadcast_to_all(update, context, message)
+    
+    # Clear user context
+    context.user_data.clear()
+    
+    # Send confirmation to admin
+    await update.message.reply_text(
+        f"Broadcast completed.\n"
+        f"Successfully sent to: {success_count} users\n"
+        f"Failed to send to: {failure_count} users"
+    )
+    
+    return ConversationHandler.END
+
+
+async def broadcast_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Cancel the broadcast conversation."""
+    if update.message:
+        await update.message.reply_text("Broadcast cancelled.")
+    context.user_data.clear()
+    return ConversationHandler.END
+
+
+async def send_broadcast_to_all(update: Update, context: ContextTypes.DEFAULT_TYPE, message: str) -> tuple[int, int]:
+    """Send a broadcast message to all registered users."""
+    if not update.effective_user:
+        return 0, 0
+    
+    session_factory = context.application.bot_data["session_factory"]
+    success_count = 0
+    failure_count = 0
+    
+    async with session_scope(session_factory) as session:
+        # Get all registered users
+        result = await session.execute(select(Agent.telegram_id))
+        user_ids = result.scalars().all()
+        
+        if not user_ids:
+            await update.message.reply_text("No registered users found.")
+            return 0, 0
+        
+        # Send message to each user
+        for user_id in user_ids:
+            try:
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=f"📢 *Broadcast Message* 📢\n\n{message}",
+                    parse_mode="MarkdownV2"
+                )
+                success_count += 1
+                
+                # Add a small delay to avoid hitting rate limits
+                await asyncio.sleep(0.05)
+                
+            except Exception as e:
+                logger.error(f"Failed to send broadcast to user {user_id}: {e}")
+                failure_count += 1
+    
+    return success_count, failure_count
+
+
 def configure_handlers(application: Application) -> None:
     application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("help", help_command))
     register_handler = ConversationHandler(
         entry_points=[CommandHandler("register", register_start)],
         states={
@@ -2152,6 +2774,35 @@ def configure_handlers(application: Application) -> None:
     )
     application.add_handler(verify_handler)
     
+    proof_handler = ConversationHandler(
+        entry_points=[CommandHandler("proof", proof_command)],
+        states={
+            PROOF_SCREENSHOT: [MessageHandler(filters.PHOTO, proof_screenshot)],
+        },
+        fallbacks=[CommandHandler("cancel", verify_cancel)],
+    )
+    application.add_handler(proof_handler)
+    
+    settings_handler = ConversationHandler(
+        entry_points=[CommandHandler("settings", settings_command)],
+        states={
+            SETTINGS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, settings_menu)],
+            SETTINGS_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, settings_value)],
+        },
+        fallbacks=[CommandHandler("cancel", settings_cancel)],
+    )
+    application.add_handler(settings_handler)
+    
+    broadcast_handler = ConversationHandler(
+        entry_points=[CommandHandler("broadcast", broadcast_command)],
+        states={
+            BROADCAST_MESSAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, broadcast_message)],
+            BROADCAST_CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, broadcast_confirm)],
+        },
+        fallbacks=[CommandHandler("cancel", broadcast_cancel)],
+    )
+    application.add_handler(broadcast_handler)
+    
     application.add_handler(CommandHandler("submit", submit))
     application.add_handler(CommandHandler("submit_data", submit_data))
     application.add_handler(CommandHandler("leaderboard", leaderboard))
@@ -2165,6 +2816,7 @@ def configure_handlers(application: Application) -> None:
     application.add_handler(CommandHandler("approve_verification", approve_verification))
     application.add_handler(CommandHandler("reject_verification", reject_verification))
     application.add_handler(CommandHandler("backup", manual_backup_command))
+    application.add_handler(CommandHandler("stats", stats_command))
     application.add_handler(MessageHandler((filters.TEXT & ~filters.COMMAND) & (filters.ChatType.PRIVATE | filters.ChatType.GROUPS), handle_ingress_message))
     application.add_handler(MessageHandler(filters.ChatType.GROUPS, store_group_message))
 
