@@ -266,69 +266,204 @@ TIME_SPAN_ALIASES = {
     "MONTH": "MONTHLY",
 }
 
-SPACE_SEPARATED_COLUMNS = [
-    "Time Span",
-    "Agent Name",
-    "Agent Faction",
-    "Date (yyyy-mm-dd)",
-    "Time (hh:mm:ss)",
-    "Level",
-    "Lifetime AP",
-    "Current AP",
-    "Unique Portals Visited",
-    "Unique Portals Drone Visited",
-    "Furthest Drone Distance",
-    "Portals Discovered",
-    "XM Collected",
-    "OPR Agreements",
-    "Portal Scans Uploaded",
-    "Uniques Scout Controlled",
-    "Resonators Deployed",
-    "Links Created",
-    "Control Fields Created",
-    "Mind Units Captured",
-    "Longest Link Ever Created",
-    "Largest Control Field",
-    "XM Recharged",
-    "Portals Captured",
-    "Unique Portals Captured",
-    "Mods Deployed",
-    "Hacks",
-    "Drone Hacks",
-    "Glyph Hack Points",
-    "Completed Hackstreaks",
-    "Longest Sojourner Streak",
-    "Resonators Destroyed",
-    "Portals Neutralized",
-    "Enemy Links Destroyed",
-    "Enemy Fields Destroyed",
-    "Drones Returned",
-    "Machina Links Destroyed",
-    "Machina Resonators Destroyed",
-    "Machina Portals Neutralized",
-    "Machina Portals Reclaimed",
-    "Max Time Portal Held",
-    "Max Time Link Maintained",
-    "Max Link Length x Days",
-    "Max Time Field Held",
-    "Largest Field MUs x Days",
-    "Forced Drone Recalls",
-    "Distance Walked",
-    "Kinetic Capsules Completed",
-    "Unique Missions Completed",
-    "Research Bounties Completed",
-    "Research Days Completed",
-    "NL-1331 Meetup(s) Attended",
-    "First Saturday Events",
-    "Second Sunday Events",
-    "+Beta Tokens",
-    "Agents Recruited",
-]
+SPACE_SEPARATED_COLUMN_SETS: tuple[tuple[str, ...], ...] = (
+    (
+        "Time Span",
+        "Agent Name",
+        "Agent Faction",
+        "Date (yyyy-mm-dd)",
+        "Time (hh:mm:ss)",
+        "Level",
+        "Lifetime AP",
+        "Current AP",
+        "Unique Portals Visited",
+        "Unique Portals Drone Visited",
+        "Furthest Drone Distance",
+        "Portals Discovered",
+        "XM Collected",
+        "OPR Agreements",
+        "Portal Scans Uploaded",
+        "Uniques Scout Controlled",
+        "Resonators Deployed",
+        "Links Created",
+        "Control Fields Created",
+        "Mind Units Captured",
+        "Longest Link Ever Created",
+        "Largest Control Field",
+        "XM Recharged",
+        "Portals Captured",
+        "Unique Portals Captured",
+        "Mods Deployed",
+        "Hacks",
+        "Drone Hacks",
+        "Glyph Hack Points",
+        "Overclock Hack Points",
+        "Completed Hackstreaks",
+        "Longest Sojourner Streak",
+        "Resonators Destroyed",
+        "Portals Neutralized",
+        "Enemy Links Destroyed",
+        "Enemy Fields Destroyed",
+        "Battle Beacon Combatant",
+        "Drones Returned",
+        "Machina Links Destroyed",
+        "Machina Resonators Destroyed",
+        "Machina Portals Neutralized",
+        "Machina Portals Reclaimed",
+        "Max Time Portal Held",
+        "Max Time Link Maintained",
+        "Max Link Length x Days",
+        "Max Time Field Held",
+        "Largest Field MUs x Days",
+        "Forced Drone Recalls",
+        "Distance Walked",
+        "Kinetic Capsules Completed",
+        "Unique Missions Completed",
+        "Research Bounties Completed",
+        "Research Days Completed",
+        "First Saturday Events",
+        "Second Sunday Events",
+        "OPR Live Events",
+        "+Delta Tokens",
+        "+Delta Reso Points",
+        "+Delta Field Points",
+        "Recursions",
+        "Months Subscribed",
+    ),
+    (
+        "Time Span",
+        "Agent Name",
+        "Agent Faction",
+        "Date (yyyy-mm-dd)",
+        "Time (hh:mm:ss)",
+        "Level",
+        "Lifetime AP",
+        "Current AP",
+        "Unique Portals Visited",
+        "Unique Portals Drone Visited",
+        "Furthest Drone Distance",
+        "Portals Discovered",
+        "XM Collected",
+        "OPR Agreements",
+        "Portal Scans Uploaded",
+        "Uniques Scout Controlled",
+        "Resonators Deployed",
+        "Links Created",
+        "Control Fields Created",
+        "Mind Units Captured",
+        "Longest Link Ever Created",
+        "Largest Control Field",
+        "XM Recharged",
+        "Portals Captured",
+        "Unique Portals Captured",
+        "Mods Deployed",
+        "Hacks",
+        "Drone Hacks",
+        "Glyph Hack Points",
+        "Completed Hackstreaks",
+        "Longest Sojourner Streak",
+        "Resonators Destroyed",
+        "Portals Neutralized",
+        "Enemy Links Destroyed",
+        "Enemy Fields Destroyed",
+        "Battle Beacon Combatant",
+        "Drones Returned",
+        "Machina Links Destroyed",
+        "Machina Resonators Destroyed",
+        "Machina Portals Neutralized",
+        "Machina Portals Reclaimed",
+        "Max Time Portal Held",
+        "Max Time Link Maintained",
+        "Max Link Length x Days",
+        "Max Time Field Held",
+        "Largest Field MUs x Days",
+        "Forced Drone Recalls",
+        "Distance Walked",
+        "Kinetic Capsules Completed",
+        "Unique Missions Completed",
+        "Research Bounties Completed",
+        "Research Days Completed",
+        "NL-1331 Meetup(s) Attended",
+        "First Saturday Events",
+        "Second Sunday Events",
+        "OPR Live Events",
+        "+Beta Tokens",
+        "Recursions",
+    ),
+    (
+        "Time Span",
+        "Agent Name",
+        "Agent Faction",
+        "Date (yyyy-mm-dd)",
+        "Time (hh:mm:ss)",
+        "Level",
+        "Lifetime AP",
+        "Current AP",
+        "Unique Portals Visited",
+        "Unique Portals Drone Visited",
+        "Furthest Drone Distance",
+        "Portals Discovered",
+        "XM Collected",
+        "OPR Agreements",
+        "Portal Scans Uploaded",
+        "Uniques Scout Controlled",
+        "Resonators Deployed",
+        "Links Created",
+        "Control Fields Created",
+        "Mind Units Captured",
+        "Longest Link Ever Created",
+        "Largest Control Field",
+        "XM Recharged",
+        "Portals Captured",
+        "Unique Portals Captured",
+        "Mods Deployed",
+        "Hacks",
+        "Drone Hacks",
+        "Glyph Hack Points",
+        "Completed Hackstreaks",
+        "Longest Sojourner Streak",
+        "Resonators Destroyed",
+        "Portals Neutralized",
+        "Enemy Links Destroyed",
+        "Enemy Fields Destroyed",
+        "Battle Beacon Combatant",
+        "Drones Returned",
+        "Machina Links Destroyed",
+        "Machina Resonators Destroyed",
+        "Machina Portals Neutralized",
+        "Machina Portals Reclaimed",
+        "Max Time Portal Held",
+        "Max Time Link Maintained",
+        "Max Link Length x Days",
+        "Max Time Field Held",
+        "Largest Field MUs x Days",
+        "Forced Drone Recalls",
+        "Distance Walked",
+        "Kinetic Capsules Completed",
+        "Unique Missions Completed",
+        "Research Bounties Completed",
+        "Research Days Completed",
+        "NL-1331 Meetup(s) Attended",
+        "First Saturday Events",
+        "Second Sunday Events",
+        "OPR Live Events",
+        "+Beta Tokens",
+        "Recursions",
+        "Months Subscribed",
+    ),
+)
 
-SPACE_SEPARATED_IGNORED_COLUMNS: set[str] = set()
+SPACE_SEPARATED_COLUMNS = SPACE_SEPARATED_COLUMN_SETS[0]
+
+SPACE_SEPARATED_IGNORED_COLUMNS: set[str] = {
+    "+Delta Tokens",
+    "+Delta Reso Points",
+    "+Delta Field Points",
+    "+Beta Tokens",
+}
 
 SPACE_SEPARATED_HEADER_LINE = " ".join(SPACE_SEPARATED_COLUMNS)
-SPACE_SEPARATED_HEADER_MAP = {SPACE_SEPARATED_HEADER_LINE: tuple(SPACE_SEPARATED_COLUMNS)}
+SPACE_SEPARATED_HEADER_MAP = {" ".join(columns): columns for columns in SPACE_SEPARATED_COLUMN_SETS}
 
 TIME_SPAN_VALUES = {
     "ALL TIME",
@@ -410,56 +545,17 @@ def _parse_space_separated_dataset(lines: list[str]) -> dict[str, str]:
     data_line = next((line for line in lines[1:] if line.strip()), None)
     if data_line is None:
         raise ValueError("Data must contain at least one data row")
-    tokens = data_line.split()
-    if not tokens:
+    if not data_line.split():
         raise ValueError("Data row is empty")
-    time_span = None
-    position = 0
-    max_span_tokens = min(len(tokens), 4)
-    for end in range(1, max_span_tokens + 1):
-        candidate = " ".join(tokens[:end])
-        upper_candidate = candidate.upper()
-        if upper_candidate in TIME_SPAN_ALIASES:
-            time_span = TIME_SPAN_ALIASES[upper_candidate]
-            position = end
-            break
-    if time_span is None:
-        raise ValueError("Invalid time span value")
-    name_tokens: list[str] = []
-    while position < len(tokens) and tokens[position].upper() not in FACTION_ALIASES:
-        name_tokens.append(tokens[position])
-        position += 1
-    if not name_tokens or position >= len(tokens):
-        raise ValueError("Missing agent faction")
-    agent_name = " ".join(name_tokens)
-    faction_token = tokens[position]
-    position += 1
-    if faction_token.upper() not in FACTION_ALIASES:
-        raise ValueError(f"Unknown faction: {faction_token}")
-    if len(tokens) - position < 3:
-        raise ValueError("Missing date or time values")
-    date_token = tokens[position]
-    position += 1
-    time_token = tokens[position]
-    position += 1
-    level_token = tokens[position]
-    position += 1
-    remaining_tokens = tokens[position:]
-    expected_remaining = len(headers) - 6
-    if len(remaining_tokens) != expected_remaining:
+    row_map = _parse_space_separated_row(data_line, headers)
+    if row_map is None:
         raise ValueError("Data row has unexpected number of columns")
-    data_dict: dict[str, str] = {
-        headers[0]: time_span,
-        headers[1]: agent_name,
-        headers[2]: faction_token,
-        headers[3]: date_token,
-        headers[4]: time_token,
-        headers[5]: level_token,
-    }
-    for column, value in zip(headers[6:], remaining_tokens):
+    data_dict: dict[str, str] = {}
+    for column in headers:
         if column in SPACE_SEPARATED_IGNORED_COLUMNS:
             continue
-        data_dict[column] = value
+        if column in row_map:
+            data_dict[column] = row_map[column]
     return data_dict
 
 
@@ -509,7 +605,7 @@ def _parse_space_separated_row(row: str, headers: list[str]) -> dict[str, str] |
     time_span = None
     position = 0
     max_span_tokens = min(len(tokens), 4)
-    for end in range(1, max_span_tokens + 1):
+    for end in range(max_span_tokens, 0, -1):
         candidate = " ".join(tokens[:end])
         upper_candidate = candidate.upper()
         if upper_candidate in TIME_SPAN_ALIASES:
@@ -597,7 +693,7 @@ def parse_ingress_message(text: str) -> dict[str, Any] | list[dict[str, Any]] | 
         headers_tuple = SPACE_SEPARATED_HEADER_MAP.get(header_line)
         if not headers_tuple:
             return None
-        headers = list(headers_tuple)
+        headers = [column for column in headers_tuple if column not in SPACE_SEPARATED_IGNORED_COLUMNS]
     cycle_indices = [index for index, header in enumerate(headers) if header.startswith("+")]
     if not cycle_indices:
         return None
@@ -679,16 +775,16 @@ def parse_tab_space_data(data: str) -> tuple[int, dict[str, Any], str]:
     if len(lines) < 2:
         raise ValueError("Data must contain at least a header and one data row")
     header_line = lines[0]
-    expected_headers = tuple(SPACE_SEPARATED_COLUMNS)
     data_dict: dict[str, str]
     if '\t' in header_line:
         headers = tuple(part.strip() for part in header_line.split('\t'))
-        if headers != expected_headers:
+        matched_columns = next((columns for columns in SPACE_SEPARATED_COLUMN_SETS if columns == headers), None)
+        if matched_columns is None:
             raise ValueError("Unsupported header format")
         values = [part.strip() for part in lines[1].split('\t')]
-        if len(values) != len(headers):
+        if len(values) != len(matched_columns):
             raise ValueError("Data row has unexpected number of columns")
-        data_dict = dict(zip(headers, values))
+        data_dict = {column: value for column, value in zip(matched_columns, values) if column not in SPACE_SEPARATED_IGNORED_COLUMNS}
     else:
         data_dict = _parse_space_separated_dataset(lines)
     if "Agent Name" not in data_dict:
@@ -818,28 +914,28 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         help_text = (
             "🤖 *PrimeStatsBot Help* 🤖\\n\\n"
             "*User Commands:*\\n"
-            "/start - Welcome message and getting started\\n"
-            "/register - Register your agent with the bot\\n"
-            "/submit - Submit your AP and metrics\\n"
-            "/submit_data - Submit tab/space-separated data from Ingress Prime\\n"
-            "/verify - Submit your stats with screenshot verification\\n"
-            "/proof - Submit a screenshot as proof\\n"
-            "/leaderboard - View the leaderboard\\n"
-            "/myrank - Check your rank on the leaderboard\\n"
-            "/top10 - View top 10 agents by cycle points\\n"
-            "/top <ENL\\|RES> - View top 10 agents by faction\\n"
-            "/lastcycle - View top agents from the last cycle\\n"
-            "/lastweek - View top agents from the last 7 days\\n"
-            "/settings - Configure your display settings\\n"
-            "/help - Show this help message\\n\\n"
+            "/start \\- Welcome message and getting started\\n"
+            "/register \\- Register your agent with the bot\\n"
+            "/submit \\- Submit your AP and metrics\\n"
+            "/submit_data \\- Submit tab/space\\-separated data from Ingress Prime\\n"
+            "/verify \\- Submit your stats with screenshot verification\\n"
+            "/proof \\- Submit a screenshot as proof\\n"
+            "/leaderboard \\- View the leaderboard\\n"
+            "/myrank \\- Check your rank on the leaderboard\\n"
+            "/top10 \\- View top 10 agents by cycle points\\n"
+            "/top <ENL\\|RES> \\- View top 10 agents by faction\\n"
+            "/lastcycle \\- View top agents from the last cycle\\n"
+            "/lastweek \\- View top agents from the last 7 days\\n"
+            "/settings \\- Configure your display settings\\n"
+            "/help \\- Show this help message\\n\\n"
             "*Group Admin Commands:*\\n"
-            "/privacy <public\\|soft\\|strict> - Set group privacy mode\\n\\n"
+            "/privacy <public\\|soft\\|strict> \\- Set group privacy mode\\n\\n"
             "*Bot Admin Commands:*\\n"
-            "/pending_verifications - View pending verification requests\\n"
-            "/approve_verification <id> - Approve a verification request\\n"
-            "/reject_verification <id> <reason> - Reject a verification request\\n"
-            "/broadcast - Send a broadcast message to all users\\n"
-            "/backup - Manually trigger a database backup"
+            "/pending_verifications \\- View pending verification requests\\n"
+            "/approve_verification <id> \\- Approve a verification request\\n"
+            "/reject_verification <id> <reason> \\- Reject a verification request\\n"
+            "/broadcast \\- Send a broadcast message to all users\\n"
+            "/backup \\- Manually trigger a database backup"
         )
         await update.message.reply_text(help_text, parse_mode="MarkdownV2")
 
@@ -990,21 +1086,16 @@ async def submit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         existing_submission = result.scalar_one_or_none()
         
         if existing_submission:
-            # Update the existing submission
             existing_submission.ap = ap
             existing_submission.metrics = convert_datetime_to_iso(metrics)
             existing_submission.time_span = time_span
             existing_submission.submitted_at = datetime.now(timezone.utc)
-            submission = existing_submission
-            
-            # If the submission has a verification, reset it to pending
             if existing_submission.verification:
                 existing_submission.verification.status = VerificationStatus.pending.value
                 existing_submission.verification.admin_id = None
                 existing_submission.verification.verified_at = None
                 existing_submission.verification.rejection_reason = None
         else:
-            # Create a new submission
             submission = Submission(
                 agent_id=agent.id,
                 chat_id=chat_id_value,
@@ -1013,17 +1104,14 @@ async def submit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 time_span=time_span
             )
             session.add(submission)
-            await session.flush()  # Get the submission ID
-            
-            # Create a verification record for the new submission
+            await session.flush()
             verification = Verification(
                 submission_id=submission.id,
-                screenshot_path="",  # Empty path for now, will be updated if user sends screenshot
+                screenshot_path="",
                 status=VerificationStatus.pending.value
             )
             session.add(verification)
-            
-        # Get agent name and faction for the response message
+
         agent_name = metrics.get("agent_name", agent.codename)
         faction = metrics.get("faction", agent.faction)
         
@@ -1431,32 +1519,17 @@ async def myrank_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await update.message.reply_text("Register first with /register.")
             return
         
-        # Determine which metric field to use for ranking
         if metric == "ap":
             metric_field = Submission.ap
         else:
-            # For custom metrics, we need to extract them from the JSON metrics field
             metric_field = func.coalesce(Submission.metrics[metric].astext.cast(Integer), 0)
         
-        # Get the agent's metric value
-        agent_metric_result = await session.execute(
-            select(func.sum(metric_field))
-            .where(Submission.agent_id == agent.id)
-        )
+        stmt_metric = select(func.sum(metric_field)).where(Submission.agent_id == agent.id)
         if is_group_chat:
-            agent_metric_result = await session.execute(
-                select(func.sum(metric_field))
-                .where(Submission.agent_id == agent.id)
-                .where(Submission.chat_id == chat_id_value)
-            )
+            stmt_metric = stmt_metric.where(Submission.chat_id == chat_id_value)
         if time_span:
-            agent_metric_result = await session.execute(
-                select(func.sum(metric_field))
-                .where(Submission.agent_id == agent.id)
-                .where(Submission.chat_id == chat_id_value if is_group_chat else True)
-                .where(Submission.time_span == time_span)
-            )
-        
+            stmt_metric = stmt_metric.where(Submission.time_span == time_span)
+        agent_metric_result = await session.execute(stmt_metric)
         agent_metric_value = agent_metric_result.scalar() or 0
         
         # Get all agents ranked by the selected metric (for the same chat_id if in group)
@@ -1570,8 +1643,13 @@ async def store_group_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
     timestamp = message.date or datetime.now(timezone.utc)
     session_factory = context.application.bot_data["session_factory"]
+    settings: Settings = context.application.bot_data["settings"]
     async with session_scope(session_factory) as session:
-        setting = await _get_or_create_group_setting(session, message.chat_id)
+        setting = await _get_or_create_group_setting(
+            session,
+            message.chat_id,
+            settings.group_message_retention_minutes,
+        )
         mode = GroupPrivacyMode(setting.privacy_mode)
         if mode is GroupPrivacyMode.public:
             return
@@ -1619,6 +1697,7 @@ async def set_group_privacy(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             settings.group_message_retention_minutes,
         )
         setting.privacy_mode = mode.value
+        setting.last_updated_by = update.effective_user.id if update.effective_user else setting.last_updated_by
     await update.message.reply_text(f"Privacy mode set to {mode.value}.")
 
 

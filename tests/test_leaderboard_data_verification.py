@@ -21,7 +21,6 @@ async def test_data_verification():
         from sqlalchemy import create_engine, select, func
         from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
         from sqlalchemy.orm import sessionmaker
-        import aiosqlite
         
         print("✅ Required modules imported successfully")
         
@@ -182,6 +181,7 @@ if __name__ == "__main__":
     if success:
         print("\n" + "=" * 60)
         print("✅ DATA VERIFICATION COMPLETED")
+        
     else:
         print("\n" + "=" * 60)
         print("❌ DATA VERIFICATION FAILED")
