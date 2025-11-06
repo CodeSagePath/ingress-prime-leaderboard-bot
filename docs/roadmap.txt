@@ -1,0 +1,887 @@
+# ✅ **UPDATED ROADMAP (Step-13 onward)**
+
+### **13. Rectify Database Schema Based on Real Usage**
+
+Since users may DM the bot or use it in groups, revise your DB:
+
+**Tables you must create/add:**
+
+| Table         | Purpose                                                               |
+| ------------- | --------------------------------------------------------------------- |
+| `users`       | Telegram User ID, agent name, faction, level, phone (optional), score |
+| `submissions` | User ID, score, timestamp, source (DM or group)                       |
+| `groups`      | Group ID, group name, auto-delete ON/OFF, delete interval             |
+
+✅ Auto-delete is now per-group, not globally
+✅ Track submissions individually so leaderboard can be rebuilt anytime
+
+**Prompt for GPT-5 Codex:**
+
+```
+Create PostgreSQL/SQLite tables for a Telegram leaderboard bot.
+Tables: users, submissions, groups.
+Fields should include primary keys, foreign keys, timestamps, and constraints that ensure unique user ID + agent name correlation.
+```
+
+---
+
+### **14. Implement Auto-Delete Message System (Termux-Friendly)**
+
+Instead of long-running cron dependencies, use **Python `apscheduler` + SQLite**:
+
+* When a message is received in a group
+* Store its Telegram message ID + timestamp
+* Scheduler checks every 5–10 minutes:
+  → If timestamp + configured interval passed → bot deletes message
+
+✅ Works reliably on Termux
+✅ Survives device screen-off
+✅ No root or custom scripts required
+
+**Prompt for GPT-5 Codex:**
+
+```
+Write Python code using python-telegram-bot + APScheduler.
+Goals:
+1. Store received group messages in sqlite with message_id, chat_id, timestamp.
+2. Every 10 minutes scan for messages older than X minutes.
+3. Bot deletes those messages safely using try/except (ignore errors if already removed).
+```
+
+---
+
+
+
+
+
+
+### **15. Offline-Friendly Operation**
+
+Since device is old + might lose internet:
+
+✔ Use SQLite
+✔ Cache actions locally
+✔ When internet returns, sync pending writes
+
+**Add a “pending actions” table**:
+| id | action | chat_id | message_id | executed | timestamp |
+
+This ensures the bot never crashes due to `FloodWait` or connectivity drops.
+
+---
+
+
+
+
+
+
+
+
+### **16. Optimize Termux Deployment**
+
+You said **NO help about basic Termux** — so this is only bot-specific optimization:
+
+✅ Create a `keepalive.py` watchdog
+✅ If bot crashes → relaunch
+✅ Write logs to a rotating file to avoid storage crash
+✅ Use `nohup` or `pm2` for persistence
+
+**Prompt for GPT-5 Codex:**
+
+```
+Create a Python script watch_bot.py that:
+- Runs bot.py
+- If bot.py exits or throws exception, relaunch immediately.
+- Writes timestamps + error to log.txt using rotating logs.
+```
+
+---
+
+
+
+
+
+
+### **17. Group Privacy Modes**
+
+Your bot must support:
+
+| Mode   | Behavior                                             |
+| ------ | ---------------------------------------------------- |
+| Strict | Deletes all commands & data after leaderboard update |
+| Soft   | Only deletes score submissions                       |
+| Public | No deletion, only leaderboard announcements          |
+
+Store mode per group in DB.
+
+---
+
+
+
+
+
+
+
+### **18. Leaderboard Commands**
+
+| Command             | What it does       |
+| ------------------- | ------------------ |
+| `/submit 567k`      | Updates user score |
+| `/leaderboard`      | Top 10             |
+| `/myrank`           | Personal rank      |
+| `/proof` (optional) | Attach screenshot  |
+
+✅ Auto-verification not needed
+✅ Store images to local folder + DB path reference if you want
+
+---
+
+
+
+
+
+
+
+### **19. Cron/Automation for Weekly Reset**
+
+Ingress First Saturday style:
+
+* Every Saturday 00:00, reset weekly scores
+* Keep historical stats
+
+✅ Termux friendly
+✅ APScheduler handles it
+
+---
+
+
+
+
+
+
+
+### **20. Remote Web Dashboard (Optional later)**
+
+Run a tiny Flask/FastAPI server:
+
+* Check leaderboard in browser
+* Admin can change deletion times / modes
+
+Termux can host it on localhost or LAN.
+
+---
+
+
+
+
+
+## ✅ PROMPTS (for GLM 4.5 / GPT-5 Codex)
+
+Copy-paste when developing:
+
+---
+
+### **A) Database + Auto-Delete**
+
+```
+You are writing a Telegram bot for Termux with Python.
+Use python-telegram-bot + APScheduler + SQLite.
+
+Required features:
+1. users table, submissions table, groups table.
+2. Store every group message with message_id + timestamp.
+3. Every 10 minutes delete messages older than group-configured interval.
+4. If deletion fails (message already gone), ignore and continue.
+
+Generate complete, clean Python code with comments.
+```
+
+---
+
+### **B) Watchdog Restart Script**
+
+```
+Write a Python script watch_bot.py
+
+Requirements:
+- Start bot.py as a subprocess.
+- If it exits, wait 2 seconds and restart.
+- Log all crashes to log.txt with timestamps.
+- Rotate logs after 2MB.
+```
+
+---
+
+### **C) Leaderboard Commands**
+
+```
+Write python-telegram-bot v20+ handlers for:
+- /submit <score>
+- /leaderboard
+- /myrank
+
+Store score submissions in SQLite.
+If user submits multiple times, update the latest.
+Leaderboard should show top 10 descending.
+```
+
+---
+
+### **D) Weekly Reset Scheduler**
+
+```
+Using APScheduler in Python, reset weekly scores every Saturday at 00:00.
+Store historical scores in a 'history' table.
+Announce weekly winners in group chats.
+```
+
+---
+
+## ✅ Suggested Development Order (NEW STEPS)
+
+1. Fix database structure ✅
+2. Implement auto-delete with timestamp ✅
+3. Add command system ✅
+4. Add weekly cron ✅
+5. Add watchdog script ✅
+6. Deploy on Termux ✅
+
+---
+
+## 💡 Extra Tips Since It’s Running on an Old Android
+
+* Avoid heavy logging → kills storage
+* Use Python 3.11 (lighter, faster)
+* Use `uvloop` only if you later add async HTTP
+* Disable image analysis to save RAM
+* Keep bot text-only for performance
+
+---
+
+If you want, I can generate:
+✅ Full ready-to-run **bot.py**
+✅ Full **watch_bot.py**
+✅ SQLite schema
+✅ Testing procedure (because Termux sometimes kills processes on battery saver)
+
+Would you like the complete code package for all 3 core parts?
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# Roadmap — Unofficial Ingress Prime Leaderboard Telegram Bot (combined & AI-ready)
+
+Nice — I combined all three responses into a single, actionable roadmap and converted each technical milestone into **ready-to-run prompts** for **Z.ai GLM 4.5** (planning, docs, tests, conversational flows) and **GPT-5 Codex** (code scaffolding, SQL, bot handlers, infra). Use GLM for higher-level, natural-language tasks and product/UX writing; use GPT-5 Codex for code, migrations, and precise implementation. I also include verification strategies, DB schema, auto-delete mechanics, deployment notes, and a concise copy/paste checklist.
+
+---
+
+# 1) One-line summary / goal
+
+Build a privacy-aware, unofficial Ingress Prime leaderboard Telegram bot that accepts DM & group submissions, auto-deletes group entries, supports multi-category (Trekker, Scout, etc.) leaderboards split by ENL/RES, offers verification options, and can scale to hosted production.
+
+---
+
+# 2) High-level phases & milestones (prioritized MVP → full product)
+
+Phase A — Discover & Plan
+
+* Requirements doc, categories list, trust/privacy model, primary commands.
+* Select stack, set up repo and secrets.
+
+Phase B — MVP (core)
+
+* Bot registration, `/start`, `/register`, `/submit`, `/leaderboard`, `/my`.
+* DB schema + migrations.
+* DM + guided submission flows.
+* Basic group submission with auto-delete (configurable per-group).
+* Self-reported data only.
+
+Phase C — Moderation & Verification
+
+* Screenshot upload queue and simple moderator UI (or admin chat).
+* Mark verified/unverified on leaderboard.
+* Rate limiting & abuse controls.
+
+Phase D — Scaling & polish
+
+* Scheduled leaderboard cache, background worker, file storage (S3).
+* Image-based leaderboard generation, OCR-assisted verification (optional).
+* Web dashboard, monitoring, backups, internationalization.
+
+Phase E — Launch & maintenance
+
+* Host on chosen provider, set up CI, logging, backups, community feedback loop.
+
+---
+
+# 3) Core features (combined from all responses)
+
+* Register agent (agent name, faction ENL/RES, optional passphrase)
+* Submit stats (DM or group). Accept structured `/submit` and guided entries.
+* Leaderboard per category with ENL/RES split (`/leaderboard [category] [faction]`)
+* Auto-delete group messages (bot must be admin with Delete permission)
+* Verification queue (self-report + optional screenshot verification)
+* Admin/moderator commands: approve/reject, set autodelete, import/export, ban
+* Per-group configurable settings (autodelete on/off, delay)
+* Privacy command `/privacy` and data deletion `/delete` or `/optout`
+* Caching of leaderboards for performance
+
+---
+
+# 4) Recommended tech stack
+
+* Language: **Python 3.10+**
+* Bot framework: **python-telegram-bot v20+** (async) or **aiogram**
+* DB: **Postgres** (start with SQLite for local dev)
+* ORM: **SQLAlchemy + Alembic**
+* Task queue: **Redis + RQ** or **Celery**
+* File storage: **S3 / DigitalOcean Spaces**
+* Host: **Railway / Render / Fly.io / DigitalOcean**
+* CI/CD: **GitHub Actions**
+* Logging/monitoring: **Sentry + Prometheus/Grafana** (optional)
+
+---
+
+# 5) Data model (canonical schema — ready for migrations)
+
+Users table
+
+```sql
+users (
+  id SERIAL PRIMARY KEY,
+  tg_user_id BIGINT UNIQUE NOT NULL,
+  agent_name TEXT NOT NULL,
+  faction VARCHAR(3) NOT NULL CHECK (faction IN ('ENL','RES')),
+  verified BOOLEAN DEFAULT false,
+  verification_method TEXT,
+  extra JSONB,
+  created_at TIMESTAMP DEFAULT now(),
+  updated_at TIMESTAMP DEFAULT now()
+)
+```
+
+Stats table (history)
+
+```sql
+stats (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+  submitted_at TIMESTAMP DEFAULT now(),
+  ap BIGINT,
+  km_walked NUMERIC,
+  trekker INT,
+  scout INT,
+  reclaimer INT,
+  recharger INT,
+  other JSONB
+)
+```
+
+Leaderboards cache
+
+```sql
+leaderboard_cache (
+  id SERIAL PRIMARY KEY,
+  category TEXT NOT NULL,
+  faction VARCHAR(3) NOT NULL,
+  snapshot_at TIMESTAMP DEFAULT now(),
+  payload JSONB
+)
+```
+
+Per-group settings
+
+```sql
+groups (
+  chat_id BIGINT PRIMARY KEY,
+  autodelete BOOLEAN DEFAULT TRUE,
+  autodelete_delay_seconds INT DEFAULT 300,
+  allowed_categories JSONB DEFAULT '[]'
+)
+```
+
+Pending deletions / audit logs tables also recommended.
+
+---
+
+# 6) Auto-delete mechanics (implementation notes)
+
+* Bot must be admin with `Delete Messages` permission in group.
+* On group submission:
+
+  1. Persist submission.
+  2. Send ephemeral confirmation message.
+  3. Schedule deletion of the user message and confirmation after `autodelete_delay` (use task queue, not `asyncio.sleep` in production).
+* If bot lacks permissions, inform group and either skip deletion or disable autodelete for that group.
+
+---
+
+# 7) Verification & trust strategies
+
+* Start with **self-reported** (fast adoption) + optional **screenshot verification** (manual).
+* Community verification: allow upvotes/flags; N upvotes → mark verified.
+* Proof-of-possession (rarely feasible) — random token posted in-game profile (optional).
+* Store only necessary fields; implement `/delete` to remove personal data.
+
+---
+
+# 8) Leaderboard computation & caching
+
+* Maintain `latest_stats` view per user.
+* Use scheduled job (cron/worker) to recompute leaderboards and write to `leaderboard_cache`.
+* Read from cache for `/leaderboard` to keep responses fast.
+* For small user base, compute on-demand.
+
+---
+
+# 9) MVP command set (copy/paste)
+
+* `/start` — welcome + buttons
+* `/register` — register agent
+* `/submit <category> <value>` or guided flow
+* `/leaderboard [category] [faction]`
+* `/my` — show user stats
+* `/verify` — upload screenshot for verification
+* `/delete` — delete data
+* Admin: `/approve <id>`, `/reject <id>`, `/setautodelete <seconds>`, `/import`, `/export`
+
+---
+
+# 10) Minimal architecture diagram (text)
+
+Bot workers (telegram updates) ↔ Postgres (data)
+Background workers (leaderboard recompute, scheduled deletes) ↔ Redis (task queue)
+File storage (S3) for screenshots
+Optional: Web dashboard (React) ↔ API server ↔ same DB
+
+---
+
+# 11) Checklist you can copy-paste
+
+* [ ] Create bot with BotFather, store BOT_TOKEN securely
+* [ ] Initialize repo, add `.env`, GitHub Actions
+* [ ] Create DB & run migrations
+* [ ] Implement `/start`, `/register`, `/submit`, `/leaderboard`, `/my`
+* [ ] Add per-group autodelete (test with bot as admin)
+* [ ] Add screenshot upload & moderator queue
+* [ ] Add caching & scheduled leaderboard recompute
+* [ ] Add rate limiting + validation
+* [ ] Add logging, monitoring, backups
+* [ ] Deploy & test with real users
+* [ ] Publish privacy & disclaimers
+
+---
+
+# 12) Prompts for your AIs — copy / paste & run
+
+Below are practical, role-tailored prompts you can feed to each model. Use them as templates and tweak `CONTEXT/ENV` variables.
+
+---
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+## A. **Use Z.ai GLM 4.5** — planning, docs, UX, conversation, tests, PR descriptions
+
+### 1) Product Requirements & design doc
+
+Prompt:
+
+```
+You are a product designer. Create a concise Product Requirements Document (PRD) for an unofficial Ingress Prime Telegram leaderboard bot. Include mission, core features, user stories, acceptance criteria, privacy considerations, and rollout milestones. Keep it one page and include example user flows for DM submission and group submission with autodelete.
+```
+
+Use GLM for: PRD, help text (`/help`, `/privacy`), user-facing messages, onboarding flows, moderation policy text.
+
+### 2) Conversation/UX flows & prompts for onboarding
+
+Prompt:
+
+```
+Write the exact conversational flow (bot prompts + expected user replies) for a guided '/register' and guided '/submit' flow, with fallback messages for invalid input and examples for quick-submit syntax.
+```
+
+### 3) Release notes & README
+
+Prompt:
+
+```
+Create a README.md for the repo that includes setup, environment variables, commands, deploy instructions, and a troubleshooting section. Target audience: developer who will deploy on Railway.
+```
+
+### 4) Test cases & QA checklist
+
+Prompt:
+
+```
+Generate a structured QA checklist and a set of unit & integration test cases for the bot's main features: register, submit, group submit + autodelete, leaderboard caching, verification queue, and admin commands. Include example inputs and expected outputs.
+```
+
+---
+
+## B. **Use GPT-5 Codex** — code generation, migrations, handlers, infra
+
+### 1) Generate SQL migrations
+
+Prompt:
+
+```
+Generate SQL migration scripts (Postgres) to create the tables: users, stats, leaderboard_cache, groups, pending_deletions, and audit_logs. Include indexes on users.tg_user_id and stats.user_id, and foreign key constraints. Output only SQL.
+```
+
+### 2) Scaffold Python bot (minimal working)
+
+Prompt:
+
+```
+Write a minimal production-ready Python project scaffold using python-telegram-bot v20+ that implements:
+- /start, /register (conversation handler), /submit (structured parse), /leaderboard (read from DB)
+- integration with SQLAlchemy (models matching the schema)
+- scheduling of a message deletion using RQ (Redis). 
+Include requirements.txt, basic Dockerfile, and an example .env.example. Output only files, with paths as headings.
+```
+
+### 3) Background worker (leaderboard recompute)
+
+Prompt:
+
+```
+Provide a background worker script in Python (RQ worker style) that:
+- Recomputes top-10 per category & faction from stats table,
+- Writes JSON payloads to leaderboard_cache table,
+- Runs on cron or scheduled via APScheduler.
+Include safe DB transactions and logging. Output only the Python file.
+```
+
+### 4) Auto-delete scheduling worker
+
+Prompt:
+
+```
+Write a Python function that schedules message deletion reliably: when a submission arrives in a group, enqueue a job into RQ with payload {chat_id, message_id, confirmation_message_id, run_at}. Include the worker code to perform deletion (with permission checks and exception handling). Output the two Python functions/files only.
+```
+
+### 5) Moderator UI stub (React)
+
+Prompt:
+
+```
+Generate a minimal React component (single-file) for a moderator queue that lists pending verification requests with Approve/Reject buttons. It should call API endpoints /api/moderation/approve and /api/moderation/reject. Use Tailwind classes; export default component. Output only the component file.
+```
+
+### 6) Unit tests (pytest)
+
+Prompt:
+
+```
+Generate Pytest unit tests for: parsing /submit strings, DB insertion for stats, and leaderboard formatting. Use SQLAlchemy in-memory SQLite for tests and provide fixtures. Output only the test file.
+```
+
+---
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+✅ Updated Roadmap (From Step 13 onward)
+✅ 13. Set Up Stable Runtime on Termux
+
+Even though you know Termux basics, for long-term bot operation, do the following:
+
+✅ Use Termux:API
+
+Access device sensors/info if needed in future (location, battery, storage)
+
+pkg install termux-api
+
+
+✅ Disable Android battery optimization
+
+Settings → Battery → Don’t optimize → Termux + Termux:API
+(Otherwise bot stops when screen off)
+
+✅ Prevent RAM clean-ups
+
+Add Termux to “Not Optimized / Do Not Kill”
+
+Remove from battery saver / memory cleaner apps
+
+✅ 14. Use PM2 or Supervisor Equivalent in Termux
+
+You need process persistence so bot auto-restarts if it crashes or Termux reboots.
+
+Option A: PM2 for Node bots
+npm install pm2 -g
+pm2 start index.js
+pm2 startup
+pm2 save
+
+Option B: Supervisor for Python bots
+pip install supervisor
+
+
+Supervisor config should auto-restart the Python script.
+
+✅ This fixes the common issue: bot dies when phone screen turns off.
+
+✅ 15. Add Auto-Start on Boot
+
+Android doesn’t run Termux automatically on boot, so add a lightweight workaround:
+
+Install Termux:Boot
+
+pkg install termux-boot
+
+
+Create script:
+
+mkdir -p ~/.termux/boot/
+nano ~/.termux/boot/startbot.sh
+
+
+Inside:
+
+#!/data/data/com.termux/files/usr/bin/sh
+cd /data/data/com.termux/files/home/bot
+pm2 start index.js
+
+
+Make it executable:
+
+chmod +x ~/.termux/boot/startbot.sh
+
+
+✅ Now when your device reboots, bot runs automatically.
+
+✅ 16. Local Storage + Remote Backup
+
+Since storage on old phones can wipe unexpectedly:
+
+Store DB in /sdcard/botdata/
+
+Auto-backup to Google Drive/Dropbox using rclone
+
+Install rclone:
+
+pkg install rclone
+rclone config
+
+
+Then create a nightly backup script.
+
+✅ 17. Rectification: Your Step 12 (Leaderboard Storage)
+
+If your Step 12 was storing player data locally, enhance it by:
+
+✅ Hashing and Obfuscation
+
+Don’t store player email/usernames in plain text
+
+Hash using SHA-256
+
+Encrypt JSON/SQLite with device-specific key
+
+✅ Auto-cleanup of group messages
+Since Telegram bots can’t delete old group messages unless they have admin rights:
+
+Ensure bot has Delete messages admin permission
+
+Add scheduled cleanup with offset:
+Example:
+
+If message older than 10 minutes → delete
+
+Store message IDs temporarily to remove later
+
+✅ Anti-spam / Anti-fake entry
+
+Rate-limit user submissions
+
+Cross-check agent name uniqueness
+
+Optional: verification using challenge code
+
+✅ Fail-safe for offline periods
+If internet drops:
+
+Queue pending leaderboard updates locally
+
+Sync once connection returns
+
+✅ 18. Logging + Monitoring
+
+Add lightweight logs:
+
+Daily log rotation (logrotate alternative in Termux)
+
+Error logs auto-sent to your Telegram admin chat
+
+Disk space monitoring script (old phones fill fast)
+
+Example script to alert you:
+
+df -h | telegram-send
+
+✅ 19. Add Webhook Mode (Optional)
+
+If long-running polling drains battery:
+
+Use Cloudflare Worker + Termux tunneling
+
+Or use webhook via webhook relay services
+This reduces CPU usage significantly.
+
+✅ 20. Security Hardening
+
+Disable physical screen lock (device can restart unattended)
+
+Use Termux password (optional)
+
+Auto-restart if internet disconnects:
+
+while true; do ping -c 1 google.com || pm2 restart all; sleep 60; done
+
+✅ 21. Final Testing
+
+Simulate:
+
+✔ Phone screen off
+✔ Low battery mode
+✔ Reboot
+✔ Internet off/on
+✔ Group spam
+✔ Large leaderboard
+
+✅ Optional Optimizations for Old Device
+
+Use Python or Go instead of Node for lower RAM usage
+
+Disable animations/apps in Android developer settings
+
+Run bot with nice or termux-wakelock
+
+✅ If you want, I can also provide:
+
+✅ Auto-backup scripts
+✅ Auto-cleanup scripts
+✅ Example PM2 config
+✅ Queue system for offline sync
+✅ SQLite secured schema for leaderboard
+✅ Web dashboard hosted from same phone
