@@ -41,7 +41,7 @@ class HealthChecker:
             async with session_factory() as session:
                 # Simple connectivity test
                 result = await session.execute(text("SELECT 1"))
-                await result.first()
+                result.first()
 
                 # Check if tables exist
                 try:
