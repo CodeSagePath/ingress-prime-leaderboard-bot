@@ -1,14 +1,10 @@
 import asyncio
-import asyncio
 import logging
 import sqlite3
 import re
 from datetime import datetime, timedelta, timezone
-import json
-from pathlib import Path
 from typing import Any
-from itertools import combinations
-
+from pathlib import Path
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
@@ -17,9 +13,8 @@ from rq import Queue
 import uvicorn
 from sqlalchemy import delete, select, func, case
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-from sqlalchemy.orm import selectinload
 from telegram import Update
-from telegram.error import RetryAfter, TelegramError
+from telegram.error import Forbidden, RetryAfter, TelegramError
 from telegram.ext import (
     Application,
     ApplicationBuilder,
@@ -35,7 +30,7 @@ from .dashboard import create_dashboard_app
 from .database import build_engine, build_session_factory, init_models, session_scope
 from .jobs.deletion import cleanup_expired_group_messages, schedule_message_deletion
 from .jobs.backup import perform_backup, manual_backup_command
-from .models import Agent, GroupMessage, GroupPrivacyMode, GroupSetting, PendingAction, Submission, WeeklyStat, Verification, VerificationStatus, UserSetting
+from .models import Agent, GroupMessage, GroupPrivacyMode, GroupSetting, PendingAction, Submission, WeeklyStat, UserSetting
 from .services.leaderboard import get_leaderboard
 from .utils.beta_tokens import get_token_status_message, update_medal_requirements, update_task_name, get_medal_config
 
@@ -110,73 +105,18 @@ def convert_datetime_to_iso(data):
 _ensure_agents_table()
 
 
-async def get_agent_verification_status(session_factory, agent_id: int, chat_id: int | None = None, time_span: str | None = None) -> str | None:
-    """Get the verification status of an agent."""
-    async with session_scope(session_factory) as session:
-        # Count approved submissions
-        approved_result = await session.execute(
-            select(func.count(Submission.id))
-            .join(Verification, Verification.submission_id == Submission.id)
-            .where(Submission.agent_id == agent_id)
-            .where(Verification.status == VerificationStatus.approved.value)
-        )
-        approved_count = approved_result.scalar() or 0
-
-        # Count pending submissions
-        pending_result = await session.execute(
-            select(func.count(Submission.id))
-            .join(Verification, Verification.submission_id == Submission.id)
-            .where(Submission.agent_id == agent_id)
-            .where(Verification.status == VerificationStatus.pending.value)
-        )
-        pending_count = pending_result.scalar() or 0
-
-        # Count total submissions
-        total_result = await session.execute(
-            select(func.count(Submission.id))
-            .where(Submission.agent_id == agent_id)
-        )
-        total_count = total_result.scalar() or 0
-
-        if approved_count > 0:
-            return f"✅ {approved_count} verified"
-        elif pending_count > 0:
-            return f"⏳ {pending_count} pending verification"
-        elif total_count > 0:
-            return "❌ Unverified submissions"
-        else:
-            return None
 
 
 async def get_agent_rank(session_factory, agent_id: int, time_span: str | None = None) -> int | None:
     """Get the current rank of an agent."""
     async with session_scope(session_factory) as session:
-        # Create a subquery to count verified submissions for each agent
-        verified_subquery = (
-            select(
-                Submission.agent_id,
-                func.sum(case(
-                    (Verification.status == VerificationStatus.approved.value, Submission.ap),
-                    else_=0
-                )).label("verified_ap"),
-                func.sum(case(
-                    (Verification.status == VerificationStatus.pending.value, Submission.ap),
-                    else_=0
-                )).label("pending_ap"),
-            )
-            .join(Verification, Verification.submission_id == Submission.id, isouter=True)
-            .group_by(Submission.agent_id)
-        ).subquery()
-
         # Main query to get all agents ranked by AP
         stmt = (
             select(
                 Agent.id,
                 func.sum(Submission.ap).label("total_ap"),
-                func.coalesce(verified_subquery.c.verified_ap, 0).label("verified_ap"),
             )
             .join(Submission, Submission.agent_id == Agent.id)
-            .join(verified_subquery, verified_subquery.c.agent_id == Agent.id, isouter=True)
         )
 
         if time_span is not None:
@@ -185,7 +125,6 @@ async def get_agent_rank(session_factory, agent_id: int, time_span: str | None =
         stmt = (
             stmt.group_by(Agent.id)
             .order_by(
-                func.coalesce(verified_subquery.c.verified_ap, 0).desc(),
                 func.sum(Submission.ap).desc(),
                 Agent.codename
             )
@@ -195,7 +134,7 @@ async def get_agent_rank(session_factory, agent_id: int, time_span: str | None =
         agents = result.all()
 
         # Find the rank of the specified agent
-        for rank, (agent_id_result, _, _) in enumerate(agents, start=1):
+        for rank, (agent_id_result, _) in enumerate(agents, start=1):
             if agent_id_result == agent_id:
                 return rank
 
@@ -975,11 +914,10 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         help_text = (
             "🤖 *PrimeStatsBot Help* 🤖\n\n"
             "📊 *MAIN COMMANDS:*\n"
-            "• /register - Register your agent\n"
-            "• /submit <data> - Submit your stats\n"
+              "• /submit <data> - Submit your stats\n"
             "• /leaderboard - View rankings\n"
             "• /myrank - Check your rank\n"
-            "• /verify - Submit screenshot proof\n\n"
+            ""
             "📈 *LEADERBOARD OPTIONS:*\n"
             "• /leaderboard weekly - This week\n"
             "• /leaderboard hacks - By hacks\n"
@@ -1000,11 +938,10 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         help_text = (
             "🤖 *PrimeStatsBot Help* 🤖\n\n"
             "📊 *MAIN COMMANDS:*\n"
-            "• /register - Register your agent\n"
-            "• /submit <data> - Submit your stats\n"
+              "• /submit <data> - Submit your stats\n"
             "• /leaderboard - View rankings\n"
             "• /myrank - Check your rank\n"
-            "• /verify - Submit screenshot proof\n\n"
+            ""
             "📈 *LEADERBOARD OPTIONS:*\n"
             "• /leaderboard weekly - This week\n"
             "• /leaderboard hacks - By hacks\n"
@@ -1026,120 +963,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.message:
         return
-    await update.message.reply_text("Welcome to the Ingress leaderboard bot. Use /register to begin.")
+    await update.message.reply_text("Welcome to the Ingress leaderboard bot. Use /submit to submit your stats.")
 
 
-async def register_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Disabled register command."""
-    if update.message:
-        await update.message.reply_text("This command has been disabled.")
-
-    settings: Settings = context.application.bot_data["settings"]
-    session_factory = context.application.bot_data["session_factory"]
-
-    # Get agent's codename from database
-    async with session_scope(session_factory) as session:
-        result = await session.execute(
-            select(Agent).where(Agent.telegram_id == update.effective_user.id)
-        )
-        agent = result.scalar_one_or_none()
-
-    if agent is None:
-        await update.message.reply_text(
-            "❌ *Registration Required*\n\n"
-            "You need to register first before checking your beta tokens status.\n\n"
-            "Use /register to get started.",
-            parse_mode="MarkdownV2"
-        )
-        return
-
-    # Get beta tokens status message
-    status_message = get_token_status_message(agent.codename)
-
-    # Send the status message
-    await update.message.reply_text(
-        escape_markdown_v2(status_message),
-        parse_mode="MarkdownV2"
-    )
-
-
-async def betatokens_admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Disabled admin command."""
-    if update.message:
-        await update.message.reply_text("This command has been disabled.")
-
-    settings: Settings = context.application.bot_data["settings"]
-
-    # Check if user is admin
-    if update.effective_user.id not in settings.admin_ids:
-        await update.message.reply_text(
-            "❌ *Access Denied*\n\nThis command is for administrators only\\.",
-            parse_mode="MarkdownV2"
-        )
-        return
-
-    args = context.args
-    if not args:
-        # Show current configuration
-        config_message = get_medal_config()
-        await update.message.reply_text(
-            escape_markdown_v2(config_message),
-            parse_mode="MarkdownV2"
-        )
-        return
-
-    command = args[0].lower()
-
-    if command == "requirements" and len(args) == 4:
-        try:
-            bronze = int(args[1])
-            silver = int(args[2])
-            gold = int(args[3])
-
-            if bronze <= 0 or silver <= bronze or gold <= silver:
-                raise ValueError("Invalid token requirements")
-
-            update_medal_requirements(bronze, silver, gold)
-
-            await update.message.reply_text(
-                f"✅ *Beta Tokens Medal Requirements Updated*\n\n"
-                f"🥉 Bronze: {bronze:,} tokens\n"
-                f"🥈 Silver: {silver:,} tokens\n"
-                f"🥇 Gold: {gold:,} tokens",
-                parse_mode="MarkdownV2"
-            )
-        except ValueError:
-            await update.message.reply_text(
-                "❌ *Invalid Requirements*\n\n"
-                "Usage: `/betatokens_admin requirements <bronze> <silver> <gold>`\n\n"
-                "Requirements must be: 0 < bronze < silver < gold",
-                parse_mode="MarkdownV2"
-            )
-
-    elif command == "task" and len(args) >= 2:
-        task_name = " ".join(args[1:])
-        update_task_name(task_name)
-
-        await update.message.reply_text(
-            f"✅ *Beta Tokens Task Updated*\n\n"
-            f"🎯 New task name: {task_name}",
-            parse_mode="MarkdownV2"
-        )
-
-    else:
-        # Show help
-        help_text = (
-            "🛠️ *Beta Tokens Admin Commands*\n\n"
-            "• `/betatokens_admin` \\- Show current configuration\n"
-            "• `/betatokens_admin requirements <bronze> <silver> <gold>` \\- Set medal requirements\n"
-            "• `/betatokens_admin task <task\\ name>` \\- Set current task name\n\n"
-            "Example:\n"
-            "`/betatokens_admin requirements 100 500 1000`"
-        )
-        await update.message.reply_text(
-            escape_markdown_v2(help_text),
-            parse_mode="MarkdownV2"
-        )
 
 
 async def last_week_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1149,6 +975,23 @@ async def last_week_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     since = datetime.now(timezone.utc) - timedelta(days=7)
     rows = await _fetch_cycle_leaderboard(10, since=since)
     await _send_cycle_leaderboard(update, settings, rows, "Top 10 agents — last 7 days")
+
+
+async def last_cycle_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message:
+        return
+    settings: Settings = context.application.bot_data["settings"]
+
+    # Get the latest cycle name
+    cycle_name = await _get_latest_cycle_name_async()
+    if not cycle_name:
+        await update.message.reply_text("No cycle data available.")
+        return
+
+    # Get leaderboard for the current cycle
+    rows = await _fetch_cycle_leaderboard(10, cycle_name=cycle_name)
+    cycle_header = f"Top 10 agents — {cycle_name}"
+    await _send_cycle_leaderboard(update, settings, rows, cycle_header)
 
 
 async def _get_or_create_group_setting(
@@ -1235,335 +1078,20 @@ async def set_group_privacy(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 
 
-async def verify_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Start the verification process by asking for submission data."""
-    if not update.message or not update.effective_user:
-        return ConversationHandler.END
-    
-    session_factory = context.application.bot_data["session_factory"]
-    async with session_scope(session_factory) as session:
-        result = await session.execute(select(Agent).where(Agent.telegram_id == update.effective_user.id))
-        agent = result.scalar_one_or_none()
-        
-        if not agent:
-            await update.message.reply_text("Register first with /register.")
-            return ConversationHandler.END
-    
-    await update.message.reply_text("Please send your submission data in one of these formats:\n\n"
-                                   "1. Key-value format: ap=12345; metric=678\n"
-                                   "2. Tab/space-separated data from Ingress Prime (copy and paste)")
-    return VERIFY_SUBMIT
 
 
-async def verify_submit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Process the submission data and ask for a screenshot."""
-    if not update.message or not update.effective_user:
-        return ConversationHandler.END
-    
-    text = update.message.text or ""
-    
-    # Detect the format and parse accordingly
-    try:
-        # Check if the payload is in the new tab/space-separated format
-        if ('\t' in text or 'Time Span' in text) and ('Agent Name' in text):
-            # New tab/space-separated format
-            ap, metrics, time_span = parse_tab_space_data(text)
-        else:
-            # Old key=value format
-            ap, metrics = parse_submission(text)
-            time_span = "ALL TIME"  # Default for old format
-    except ValueError as exc:
-        await update.message.reply_text(str(exc))
-        return VERIFY_SUBMIT
-    
-    # Store the submission data in user context for later use
-    context.user_data["verify_ap"] = ap
-    context.user_data["verify_metrics"] = metrics
-    context.user_data["verify_time_span"] = time_span
-    
-    await update.message.reply_text("Now please send a screenshot as proof of your score.")
-    return VERIFY_SCREENSHOT
 
 
-async def verify_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Process the screenshot and create a verification record."""
-    if not update.message or not update.effective_user:
-        return ConversationHandler.END
-    
-    # Check if the message contains a photo
-    if not update.message.photo:
-        await update.message.reply_text("Please send a photo as a screenshot.")
-        return VERIFY_SCREENSHOT
-    
-    # Get the submission data from user context
-    ap = context.user_data.get("verify_ap")
-    metrics = context.user_data.get("verify_metrics")
-    time_span = context.user_data.get("verify_time_span", "ALL TIME")
-    
-    if not ap or not metrics:
-        await update.message.reply_text("Submission data not found. Please start over with /verify.")
-        return ConversationHandler.END
-    
-    # Get the highest resolution photo
-    photo = update.message.photo[-1]
-    file = await context.bot.get_file(photo.file_id)
-    
-    # Generate a unique filename for the screenshot
-    import uuid
-    screenshot_filename = f"screenshots/{uuid.uuid4()}.jpg"
-    
-    # Download the screenshot
-    import os
-    os.makedirs("screenshots", exist_ok=True)
-    await file.download_to_drive(screenshot_filename)
-    
-    # Get the agent
-    session_factory = context.application.bot_data["session_factory"]
-    chat = getattr(update, "effective_chat", None)
-    is_group_chat = bool(chat and getattr(chat, "type", None) in {"group", "supergroup"})
-    chat_id_value = chat.id if is_group_chat else None
-    
-    async with session_scope(session_factory) as session:
-        # Check if the submission contains an agent name (new format)
-        agent_name_from_data = metrics.get("agent_name")
-        
-        # If agent_name is provided in the data, try to find the agent by codename
-        if agent_name_from_data:
-            result = await session.execute(select(Agent).where(Agent.codename == agent_name_from_data))
-            agent = result.scalar_one_or_none()
-            
-            # If agent found by codename, verify it belongs to the current user
-            if agent and agent.telegram_id != update.effective_user.id:
-                await update.message.reply_text(f"Agent '{agent_name_from_data}' is registered to a different Telegram account. Please use your own agent data.")
-                return ConversationHandler.END
-        
-        # If no agent found by codename or no agent_name in data, try by Telegram ID
-        if not agent:
-            result = await session.execute(select(Agent).where(Agent.telegram_id == update.effective_user.id))
-            agent = result.scalar_one_or_none()
-            
-            if not agent:
-                await update.message.reply_text("Register first with /register.")
-                return ConversationHandler.END
-        
-        # Check if the user already has a submission for this chat
-        result = await session.execute(
-            select(Submission)
-            .options(selectinload(Submission.verification))
-            .where(Submission.agent_id == agent.id)
-            .where(Submission.chat_id == chat_id_value)
-            .order_by(Submission.submitted_at.desc())
-            .limit(1)
-        )
-        existing_submission = result.scalar_one_or_none()
-        
-        if existing_submission:
-            # Update the existing submission
-            existing_submission.ap = ap
-            existing_submission.metrics = convert_datetime_to_iso(metrics)
-            existing_submission.time_span = time_span
-            existing_submission.submitted_at = datetime.now(timezone.utc)
-            
-            # Update or create the verification record
-            if existing_submission.verification:
-                existing_submission.verification.screenshot_path = screenshot_filename
-                existing_submission.verification.status = VerificationStatus.pending.value
-                existing_submission.verification.admin_id = None
-                existing_submission.verification.verified_at = None
-                existing_submission.verification.rejection_reason = None
-            else:
-                verification = Verification(
-                    submission_id=existing_submission.id,
-                    screenshot_path=screenshot_filename,
-                    status=VerificationStatus.pending.value
-                )
-                session.add(verification)
-        else:
-            # Create the submission
-            submission = Submission(
-                agent_id=agent.id,
-                chat_id=chat_id_value,
-                ap=ap,
-                metrics=convert_datetime_to_iso(metrics),
-                time_span=time_span
-            )
-            session.add(submission)
-            await session.flush()  # Get the submission ID
-            
-            # Create the verification record
-            verification = Verification(
-                submission_id=submission.id,
-                screenshot_path=screenshot_filename,
-                status=VerificationStatus.pending.value
-            )
-            session.add(verification)
-    
-    # Clear user context
-    context.user_data.clear()
-    
-    await update.message.reply_text("Your submission has been received and is pending verification. You will be notified once it's reviewed.")
-    return ConversationHandler.END
 
 
-async def verify_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Cancel the verification process."""
-    if update.message:
-        await update.message.reply_text("Verification process cancelled.")
-    context.user_data.clear()
-    return ConversationHandler.END
 
 
-async def proof_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Start the proof process by asking for a screenshot."""
-    if not update.message or not update.effective_user:
-        return ConversationHandler.END
-    
-    # Get the optional database path from command arguments
-    args = context.args
-    db_path = args[0] if args else None
-    
-    # Store the database path in user context for later use
-    if db_path:
-        context.user_data["proof_db_path"] = db_path
-        await update.message.reply_text(f"Please send a screenshot as proof for database path: {db_path}")
-    else:
-        context.user_data["proof_db_path"] = None
-        await update.message.reply_text("Please send a screenshot as proof.")
-    
-    return PROOF_SCREENSHOT
 
 
-async def proof_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Process the screenshot and save it with metadata."""
-    if not update.message or not update.effective_user:
-        return ConversationHandler.END
-    
-    # Check if the message contains a photo
-    if not update.message.photo:
-        await update.message.reply_text("Please send a photo as a screenshot.")
-        return PROOF_SCREENSHOT
-    
-    # Get the database path from user context
-    db_path = context.user_data.get("proof_db_path")
-    
-    # Get the highest resolution photo
-    photo = update.message.photo[-1]
-    file = await context.bot.get_file(photo.file_id)
-    
-    # Generate a unique filename for the screenshot
-    import uuid
-    import os
-    screenshot_filename = f"proofs/{uuid.uuid4()}.jpg"
-    
-    # Create the proofs directory if it doesn't exist
-    os.makedirs("proofs", exist_ok=True)
-    
-    # Download the screenshot
-    await file.download_to_drive(screenshot_filename)
-    
-    # Get the agent
-    session_factory = context.application.bot_data["session_factory"]
-    async with session_scope(session_factory) as session:
-        result = await session.execute(select(Agent).where(Agent.telegram_id == update.effective_user.id))
-        agent = result.scalar_one_or_none()
-        
-        if not agent:
-            await update.message.reply_text("Register first with /register.")
-            return ConversationHandler.END
-        
-        # Create a verification record for the proof
-        verification = Verification(
-            submission_id=None,  # No submission associated with proof
-            screenshot_path=screenshot_filename,
-            status=VerificationStatus.pending.value
-        )
-        session.add(verification)
-        await session.flush()  # Get the verification ID
-        
-        # Create a pending action to track the proof with metadata
-        pending_action = PendingAction(
-            action=f"proof_{verification.id}",
-            chat_id=update.effective_chat.id if update.effective_chat else None,
-            message_id=update.message.message_id,
-            executed=False
-        )
-        session.add(pending_action)
-    
-    # Clear user context
-    context.user_data.clear()
-    
-    # Format the response message
-    if db_path:
-        await update.message.reply_text(f"Your proof for database path '{db_path}' has been uploaded successfully (ID: {verification.id}). It is pending review.")
-    else:
-        await update.message.reply_text(f"Your proof has been uploaded successfully (ID: {verification.id}). It is pending review.")
-    
-    return ConversationHandler.END
 
 
-async def pending_verifications(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Disabled command."""
-    if update.message:
-        await update.message.reply_text("This command has been disabled.")
 
 
-async def reject_verification(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Disabled command."""
-    if not update.message or not update.effective_user:
-        return
-    
-    settings: Settings = context.application.bot_data["settings"]
-    
-    # Check if the user is an admin
-    if update.effective_user.id not in settings.admin_user_ids:
-        await update.message.reply_text("You don't have permission to use this command.")
-        return
-    
-    # Get the verification ID and reason from command arguments
-    args = context.args
-    if not args or not args[0].isdigit() or len(args) < 2:
-        await update.message.reply_text("Usage: /reject_verification <verification_id> <reason>")
-        return
-    
-    verification_id = int(args[0])
-    reason = " ".join(args[1:])
-    
-    session_factory = context.application.bot_data["session_factory"]
-    async with session_scope(session_factory) as session:
-        # Get the verification with submission and agent details
-        result = await session.execute(
-            select(Verification, Submission, Agent)
-            .join(Submission, Verification.submission_id == Submission.id)
-            .join(Agent, Submission.agent_id == Agent.id)
-            .where(Verification.id == verification_id)
-        )
-        
-        verification_data = result.one_or_none()
-        
-        if not verification_data:
-            await update.message.reply_text(f"Verification request with ID {verification_id} not found.")
-            return
-        
-        verification, submission, agent = verification_data
-        
-        # Update the verification status
-        verification.status = VerificationStatus.rejected.value
-        verification.admin_id = update.effective_user.id
-        verification.verified_at = datetime.now(timezone.utc)
-        verification.rejection_reason = reason
-        
-        # Notify the agent
-        try:
-            await context.bot.send_message(
-                chat_id=agent.telegram_id,
-                text=f"Your submission of {submission.ap} AP has been rejected. Reason: {reason}"
-            )
-        except Exception as e:
-            logger.error(f"Failed to notify agent {agent.telegram_id} about rejected verification: {e}")
-        
-        await update.message.reply_text(
-            f"Verification request ID {verification_id} for {agent.codename} [{agent.faction}] with {submission.ap} AP has been rejected."
-        )
 
 
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1622,26 +1150,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             .limit(5)
         )
         active_users = active_users_result.all()
-        
-        # Get verification statistics
-        pending_result = await session.execute(
-            select(func.count(Verification.id))
-            .where(Verification.status == VerificationStatus.pending.value)
-        )
-        pending_verifications = pending_result.scalar()
-        
-        approved_result = await session.execute(
-            select(func.count(Verification.id))
-            .where(Verification.status == VerificationStatus.approved.value)
-        )
-        approved_verifications = approved_result.scalar()
-        
-        rejected_result = await session.execute(
-            select(func.count(Verification.id))
-            .where(Verification.status == VerificationStatus.rejected.value)
-        )
-        rejected_verifications = rejected_result.scalar()
-        
+
         # Get faction distribution
         enl_result = await session.execute(
             select(func.count(Agent.id)).where(Agent.faction == "ENL")
@@ -1671,10 +1180,6 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 f"Daily submissions: {daily_submissions}\n"
                 f"Weekly submissions: {weekly_submissions}\n"
                 f"Monthly submissions: {monthly_submissions}\n\n"
-                "VERIFICATION STATISTICS\n"
-                f"Pending verifications: {pending_verifications}\n"
-                f"Approved verifications: {approved_verifications}\n"
-                f"Rejected verifications: {rejected_verifications}\n\n"
                 "GROUP STATISTICS\n"
                 f"Total groups: {total_groups}\n\n"
                 "MOST ACTIVE USERS\n"
@@ -1695,10 +1200,6 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 f"Daily submissions: `{escape_markdown_v2(str(daily_submissions))}`\\n"
                 f"Weekly submissions: `{escape_markdown_v2(str(weekly_submissions))}`\\n"
                 f"Monthly submissions: `{escape_markdown_v2(str(monthly_submissions))}`\\n\\n"
-                "✅ *VERIFICATION STATISTICS*\\n"
-                f"⏳ Pending verifications: `{escape_markdown_v2(str(pending_verifications))}`\\n"
-                f"✅ Approved verifications: `{escape_markdown_v2(str(approved_verifications))}`\\n"
-                f"❌ Rejected verifications: `{escape_markdown_v2(str(rejected_verifications))}`\\n\\n"
                 "👥 *GROUP STATISTICS*\\n"
                 f"Total groups: `{escape_markdown_v2(str(total_groups))}`\\n\\n"
                 "🏆 *MOST ACTIVE USERS*\\n"
@@ -2319,6 +1820,103 @@ def configure_handlers(application: Application) -> None:
     application.add_handler(CommandHandler("stats", stats_command))
     application.add_handler(MessageHandler((filters.TEXT & ~filters.COMMAND) & (filters.ChatType.PRIVATE | filters.ChatType.GROUPS), handle_ingress_message))
     application.add_handler(MessageHandler(filters.ChatType.GROUPS, store_group_message))
+
+
+# Placeholder functions for missing core commands
+async def submit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /submit command - forwards to message handler."""
+    if update.message and update.message.text:
+        # Remove /submit from the beginning and process as regular message
+        text = update.message.text[7:].strip()  # Remove '/submit '
+        if text:
+            # Create a mock update with the text without the command
+            update.message.text = text
+            await handle_ingress_message(update, context)
+        else:
+            await update.message.reply_text(
+                "Usage: /submit ap=1000000 hacks=5000\n"
+                "Or paste your Ingress Prime export data"
+            )
+
+async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /leaderboard command - basic implementation."""
+    if not update.message:
+        return
+
+    settings: Settings = context.application.bot_data["settings"]
+    session_factory = context.application.bot_data["session_factory"]
+
+    # Get basic leaderboard
+    rows = await _fetch_cycle_leaderboard(10)
+    await _send_cycle_leaderboard(update, settings, rows, "Top 10 agents")
+
+async def top10_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /top10 command."""
+    await leaderboard(update, context)
+
+async def top_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /top command - basic implementation."""
+    if not update.message or not context.args:
+        await update.message.reply_text("Usage: /top ENL or /top RES")
+        return
+
+    faction = context.args[0].upper()
+    if faction not in ["ENL", "RES"]:
+        await update.message.reply_text("Faction must be ENL or RES")
+        return
+
+    settings: Settings = context.application.bot_data["settings"]
+    session_factory = context.application.bot_data["session_factory"]
+
+    # Get faction-specific leaderboard
+    rows = await _fetch_cycle_leaderboard(10, faction=faction)
+    await _send_cycle_leaderboard(update, settings, rows, f"Top 10 {faction} agents")
+
+async def myrank_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /myrank command - basic implementation."""
+    if not update.message or not update.effective_user:
+        return
+
+    session_factory = context.application.bot_data["session_factory"]
+
+    # Get agent's rank
+    async with session_scope(session_factory) as session:
+        result = await session.execute(
+            select(Agent).where(Agent.telegram_id == update.effective_user.id)
+        )
+        agent = result.scalar_one_or_none()
+
+        if not agent:
+            await update.message.reply_text("You haven't submitted any stats yet. Use /submit to get started.")
+            return
+
+        rank = await get_agent_rank(session_factory, agent.id)
+        if rank:
+            await update.message.reply_text(f"Your current rank: #{rank}")
+        else:
+            await update.message.reply_text("You haven't submitted any stats yet. Use /submit to get started.")
+
+async def betatokens_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /betatokens command - basic implementation."""
+    if not update.message or not update.effective_user:
+        return
+
+    session_factory = context.application.bot_data["session_factory"]
+
+    # Get agent's codename
+    async with session_scope(session_factory) as session:
+        result = await session.execute(
+            select(Agent).where(Agent.telegram_id == update.effective_user.id)
+        )
+        agent = result.scalar_one_or_none()
+
+        if not agent:
+            await update.message.reply_text("You haven't submitted any stats yet. Use /submit to get started.")
+            return
+
+        # Get beta tokens status
+        status_message = get_token_status_message(agent.codename)
+        await update.message.reply_text(status_message)
 
 
 async def build_application() -> Application:
