@@ -14,7 +14,7 @@ class Base(DeclarativeBase):
 def build_engine(settings: Settings) -> AsyncEngine:
     # Optimize for better performance on old Android devices
     return create_async_engine(
-        settings.database_url,
+        settings.database.url,
         echo=False,
         future=True,
         pool_size=5,  # Reduced pool size for lower memory usage
