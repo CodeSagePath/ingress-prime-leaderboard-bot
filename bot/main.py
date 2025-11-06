@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from pydoc import text
+from sqlalchemy import text
 import sqlite3
 import re
 from datetime import datetime, timedelta, timezone
