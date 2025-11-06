@@ -15,11 +15,11 @@ setup(
     name="ingress-prime-leaderboard-bot",
     version="1.0.0",
     author="Ingress Leaderboard Team",
-    author_email="admin@example.com",
+    author_email="studymailr@gmail.com",
     description="A Telegram bot for tracking Ingress Prime player statistics and leaderboards",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/yourusername/ingress-prime-leaderboard-bot",
+    url="https://github.com/CodeSagePath/ingress-prime-leaderboard-bot",
     packages=find_packages(),
     classifiers=[
         "Development Status :: 4 - Beta",
