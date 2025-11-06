@@ -37,6 +37,7 @@ from .jobs.deletion import cleanup_expired_group_messages, schedule_message_dele
 from .jobs.backup import perform_backup, manual_backup_command
 from .models import Agent, GroupMessage, GroupPrivacyMode, GroupSetting, PendingAction, Submission, WeeklyStat, Verification, VerificationStatus, UserSetting
 from .services.leaderboard import get_leaderboard
+from .utils.beta_tokens import get_token_status_message, update_medal_requirements, update_task_name, get_medal_config
 
 logger = logging.getLogger(__name__)
 
@@ -1916,6 +1917,119 @@ async def last_cycle_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await _send_cycle_leaderboard(update, settings, rows, f"Top 10 agents — {latest_cycle}")
 
 
+async def betatokens_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle beta tokens status command."""
+    if not update.message or not update.effective_user:
+        return
+
+    settings: Settings = context.application.bot_data["settings"]
+    session_factory = context.application.bot_data["session_factory"]
+
+    # Get agent's codename from database
+    async with session_scope(session_factory) as session:
+        result = await session.execute(
+            select(Agent).where(Agent.telegram_id == update.effective_user.id)
+        )
+        agent = result.scalar_one_or_none()
+
+    if agent is None:
+        await update.message.reply_text(
+            "❌ *Registration Required*\n\n"
+            "You need to register first before checking your beta tokens status.\n\n"
+            "Use /register to get started.",
+            parse_mode="MarkdownV2"
+        )
+        return
+
+    # Get beta tokens status message
+    status_message = get_token_status_message(agent.codename)
+
+    # Send the status message
+    await update.message.reply_text(
+        escape_markdown_v2(status_message),
+        parse_mode="MarkdownV2"
+    )
+
+
+async def betatokens_admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle admin beta tokens configuration command."""
+    if not update.message or not update.effective_user:
+        return
+
+    settings: Settings = context.application.bot_data["settings"]
+
+    # Check if user is admin
+    if update.effective_user.id not in settings.admin_ids:
+        await update.message.reply_text(
+            "❌ *Access Denied*\n\nThis command is for administrators only\\.",
+            parse_mode="MarkdownV2"
+        )
+        return
+
+    args = context.args
+    if not args:
+        # Show current configuration
+        config_message = get_medal_config()
+        await update.message.reply_text(
+            escape_markdown_v2(config_message),
+            parse_mode="MarkdownV2"
+        )
+        return
+
+    command = args[0].lower()
+
+    if command == "requirements" and len(args) == 4:
+        try:
+            bronze = int(args[1])
+            silver = int(args[2])
+            gold = int(args[3])
+
+            if bronze <= 0 or silver <= bronze or gold <= silver:
+                raise ValueError("Invalid token requirements")
+
+            update_medal_requirements(bronze, silver, gold)
+
+            await update.message.reply_text(
+                f"✅ *Beta Tokens Medal Requirements Updated*\n\n"
+                f"🥉 Bronze: {bronze:,} tokens\n"
+                f"🥈 Silver: {silver:,} tokens\n"
+                f"🥇 Gold: {gold:,} tokens",
+                parse_mode="MarkdownV2"
+            )
+        except ValueError:
+            await update.message.reply_text(
+                "❌ *Invalid Requirements*\n\n"
+                "Usage: `/betatokens_admin requirements <bronze> <silver> <gold>`\n\n"
+                "Requirements must be: 0 < bronze < silver < gold",
+                parse_mode="MarkdownV2"
+            )
+
+    elif command == "task" and len(args) >= 2:
+        task_name = " ".join(args[1:])
+        update_task_name(task_name)
+
+        await update.message.reply_text(
+            f"✅ *Beta Tokens Task Updated*\n\n"
+            f"🎯 New task name: {task_name}",
+            parse_mode="MarkdownV2"
+        )
+
+    else:
+        # Show help
+        help_text = (
+            "🛠️ *Beta Tokens Admin Commands*\n\n"
+            "• `/betatokens_admin` \\- Show current configuration\n"
+            "• `/betatokens_admin requirements <bronze> <silver> <gold>` \\- Set medal requirements\n"
+            "• `/betatokens_admin task <task\\ name>` \\- Set current task name\n\n"
+            "Example:\n"
+            "`/betatokens_admin requirements 100 500 1000`"
+        )
+        await update.message.reply_text(
+            escape_markdown_v2(help_text),
+            parse_mode="MarkdownV2"
+        )
+
+
 async def last_week_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.message:
         return
@@ -3190,6 +3304,8 @@ def configure_handlers(application: Application) -> None:
     application.add_handler(CommandHandler("lastcycle", last_cycle_command))
     application.add_handler(CommandHandler("lastweek", last_week_command))
     application.add_handler(CommandHandler("myrank", myrank_command))
+    application.add_handler(CommandHandler("betatokens", betatokens_command))
+    application.add_handler(CommandHandler("betatokens_admin", betatokens_admin_command))
     application.add_handler(CommandHandler("privacy", set_group_privacy))
     application.add_handler(CommandHandler("pending_verifications", pending_verifications))
     application.add_handler(CommandHandler("approve_verification", approve_verification))
