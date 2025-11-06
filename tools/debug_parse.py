@@ -7,10 +7,10 @@ Debug script for the parse_pasted_stats function.
 import os
 import sys
 
-# Add the current directory to the path so we can import primestats_adapter
+# Add the current directory to the path so we can from bot.utils import primestats_adapter
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-import primestats_adapter
+from bot.utils import primestats_adapter
 
 # Sample data with cycle information (using space-separated format from sample_data.txt)
 sample_data = """Time Span Agent Name Agent Faction Date (yyyy-mm-dd) Time (hh:mm:ss) Level Lifetime AP Current AP Unique Portals Visited Unique Portals Drone Visited Furthest Drone Distance Portals Discovered XM Collected OPR Agreements Portal Scans Uploaded Uniques Scout Controlled Resonators Deployed Links Created Control Fields Created Mind Units Captured Longest Link Ever Created Largest Control Field XM Recharged Portals Captured Unique Portals Captured Mods Deployed Hacks Drone Hacks Glyph Hack Points Completed Hackstreaks Longest Sojourner Streak Resonators Destroyed Portals Neutralized Enemy Links Destroyed Enemy Fields Destroyed Battle Beacon Combatant Drones Returned Machina Links Destroyed Machina Resonators Destroyed Machina Portals Neutralized Machina Portals Reclaimed Max Time Portal Held Max Time Link Maintained Max Link Length x Days Max Time Field Held Largest Field MUs x Days Forced Drone Recalls Distance Walked Kinetic Capsules Completed Unique Missions Completed Research Bounties Completed Research Days Completed Mission Day(s) Attended NL-1331 Meetup(s) Attended First Saturday Events Second Sunday Events +Delta Tokens +Delta Reso Points +Delta Field Points Agents Recruited Recursions Months Subscribed
