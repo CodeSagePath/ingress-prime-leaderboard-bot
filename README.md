@@ -59,7 +59,7 @@ The bot is built with Python 3.11, uses SQLAlchemy with aiosqlite for database o
    Edit the `.env` file with your configuration:
    ```
    BOT_TOKEN=your_telegram_bot_token
-   DATABASE_URL=sqlite+aiosqlite:///./bot.db
+   DATABASE_URL=sqlite+aiosqlite:///./data/bot.db
    REDIS_URL=redis://localhost:6379/0
    LEADERBOARD_SIZE=10
    AUTODELETE_ENABLED=true
@@ -73,7 +73,7 @@ The bot is built with Python 3.11, uses SQLAlchemy with aiosqlite for database o
 
 6. **Run the bot**
    ```bash
-   python -m bot.main
+   python main.py
    ```
 
 ### Docker Setup
@@ -92,7 +92,7 @@ The bot is built with Python 3.11, uses SQLAlchemy with aiosqlite for database o
        build: .
        environment:
          - BOT_TOKEN=your_telegram_bot_token
-         - DATABASE_URL=sqlite+aiosqlite:///./bot.db
+         - DATABASE_URL=sqlite+aiosqlite:///./data/bot.db
          - REDIS_URL=redis://redis:6379/0
          - LEADERBOARD_SIZE=10
          - AUTODELETE_ENABLED=true
@@ -294,7 +294,7 @@ Railway is a cloud platform that makes it easy to deploy applications. Follow th
 4. **Set environment variables**
    ```bash
    railway variables add BOT_TOKEN=your_telegram_bot_token
-   railway variables add DATABASE_URL=sqlite+aiosqlite:///./bot.db
+   railway variables add DATABASE_URL=sqlite+aiosqlite:///./data/bot.db
    railway variables add REDIS_URL=redis://redis:6379/0
    railway variables add LEADERBOARD_SIZE=10
    railway variables add AUTODELETE_ENABLED=true
@@ -331,6 +331,207 @@ Railway is a cloud platform that makes it easy to deploy applications. Follow th
 - **Scaling**: Railway automatically scales your application based on demand. The bot is designed to be stateless, with all data stored in the database and Redis.
 
 - **Monitoring**: Use Railway's built-in monitoring tools to track your bot's performance and resource usage.
+
+### Linode Server Deployment
+
+Deploy your bot on a Linode server for maximum performance and control.
+
+#### 1. Provision a Linode
+
+1. **Create a Linode instance**
+   - Choose **Ubuntu 24.04 LTS** (stable, long-term support version)
+   - Recommended specs: 2GB RAM, 1 CPU, 25GB SSD (or higher for production)
+   - Select a region closest to your users
+
+2. **SSH into your server**
+   ```bash
+   ssh root@your_linode_ip
+   ```
+
+#### 2. Server Setup (Ubuntu 24.04 LTS)
+
+1. **Update system packages**
+   ```bash
+   apt update && apt upgrade -y
+   ```
+
+2. **Install required packages**
+   ```bash
+   apt install python3 python3-pip python3-venv git redis-server nginx -y
+   ```
+
+3. **Install Node.js for PM2 (process manager)**
+   ```bash
+   curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
+   apt-get install -y nodejs
+   npm install -g pm2
+   ```
+
+4. **Configure and start services**
+   ```bash
+   systemctl enable redis-server
+   systemctl start redis-server
+   systemctl enable nginx
+   systemctl start nginx
+   ```
+
+#### 3. Deploy the Bot
+
+1. **Clone your repository**
+   ```bash
+   cd /var/www
+   git clone git@github.com:CodeSagePath/ingress-prime-leaderboard-bot.git
+   cd ingress-prime-leaderboard-bot
+   ```
+
+2. **Create virtual environment**
+   ```bash
+   python3.11 -m venv venv
+   source venv/bin/activate
+   pip install -r requirements.txt
+   ```
+
+3. **Set up environment variables**
+   ```bash
+   cp .env.example .env
+   nano .env
+   # Configure your bot token, admin IDs, etc.
+   ```
+
+4. **Test the bot**
+   ```bash
+   python main.py
+   ```
+
+#### 4. Configure PM2 for Process Management
+
+1. **Create PM2 ecosystem file**
+   ```bash
+   nano ecosystem.config.js
+   ```
+
+2. **Add the following configuration**:
+   ```javascript
+   module.exports = {
+     apps: [{
+       name: 'ingress-bot',
+       script: 'main.py',
+       interpreter: '/var/www/ingress-prime-leaderboard-bot/venv/bin/python',
+       cwd: '/var/www/ingress-prime-leaderboard-bot',
+       instances: 1,
+       autorestart: true,
+       watch: false,
+       max_memory_restart: '500M',
+       env: {
+         NODE_ENV: 'production'
+       }
+     }]
+   };
+   ```
+
+3. **Start the bot with PM2**
+   ```bash
+   pm2 start ecosystem.config.js
+   pm2 save
+   pm2 startup
+   ```
+
+#### 5. Configure Nginx (Optional but Recommended)
+
+1. **Create Nginx configuration**
+   ```bash
+   nano /etc/nginx/sites-available/ingress-bot
+   ```
+
+2. **Add basic reverse proxy (if you want web dashboard)**
+   ```nginx
+   server {
+       listen 80;
+       server_name your-domain.com;
+
+       location / {
+           proxy_pass http://localhost:8085;
+           proxy_set_header Host $host;
+           proxy_set_header X-Real-IP $remote_addr;
+           proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+           proxy_set_header X-Forwarded-Proto $scheme;
+       }
+   }
+   ```
+
+3. **Enable the site**
+   ```bash
+   ln -s /etc/nginx/sites-available/ingress-bot /etc/nginx/sites-enabled/
+   nginx -t
+   systemctl restart nginx
+   ```
+
+#### 6. Set Up SSL Certificate (Recommended)
+
+```bash
+# Install Certbot
+apt install certbot python3-certbot-nginx -y
+
+# Get SSL certificate
+certbot --nginx -d your-domain.com
+```
+
+#### 7. Configure Firewall (Ubuntu 24.04 LTS)
+
+```bash
+# Install and configure UFW firewall
+apt install ufw -y
+
+# Default policies
+ufw default deny incoming
+ufw default allow outgoing
+
+# Allow necessary ports
+ufw allow ssh
+ufw allow 80
+ufw allow 443
+
+# Enable firewall
+ufw enable
+```
+
+#### 8. Monitoring and Maintenance
+
+1. **Monitor with PM2**
+   ```bash
+   pm2 status
+   pm2 logs ingress-bot
+   pm2 monit
+   ```
+
+2. **Set up log rotation**
+   ```bash
+   nano /etc/logrotate.d/ingress-bot
+   ```
+
+3. **Backup script (optional)**
+   ```bash
+   # Create backup script
+   nano /var/www/ingress-prime-leaderboard-bot/backup.sh
+   # Add to crontab for daily backups
+   crontab -e
+   # Add: 0 2 * * * /var/www/ingress-prime-leaderboard-bot/backup.sh
+   ```
+
+### Docker Deployment (Alternative)
+
+If you prefer Docker deployment, use the provided Dockerfile:
+
+1. **Build and run with Docker**
+   ```bash
+   docker build -t ingress-bot .
+   docker run -d --name ingress-bot --env-file .env ingress-bot
+   ```
+
+2. **Use Docker Compose for complete stack**
+   ```bash
+   docker-compose up -d
+   ```
 
 ## Troubleshooting
 
