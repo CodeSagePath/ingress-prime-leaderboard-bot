@@ -13,7 +13,7 @@ import tempfile
 import unittest
 from unittest.mock import patch, mock_open
 
-from primestats_adapter import parse_pasted_stats, _parse_stat_line, _normalize_faction, _extract_cycle_info, _read_current_cycle, _write_current_cycle
+from bot.utils.primestats_adapter import parse_pasted_stats, _parse_stat_line, _normalize_faction, _extract_cycle_info, _read_current_cycle, _write_current_cycle
 
 SPACE_SEPARATED_COLUMNS = [
     "Time Span",

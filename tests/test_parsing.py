@@ -7,7 +7,7 @@ import sys
 import os
 sys.path.insert(0, os.path.abspath('.'))
 
-from primestats_adapter import parse_pasted_stats
+from bot.utils.primestats_adapter import parse_pasted_stats
 from bot.utils.beta_tokens import get_beta_tokens_manager
 
 # Sample data in the exact format provided (raw format without commas)
