@@ -1,4 +1,4 @@
-# Python 3.11+ compatibility - Termux Compatible Version
+# Python 3.11+ compatibility - Server Optimized Version
 python-telegram-bot==21.4
 SQLAlchemy==2.0.40
 aiosqlite==0.19.0

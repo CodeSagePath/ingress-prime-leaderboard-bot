@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 from redis import Redis
 from rq import Queue
 import uvicorn
-from sqlalchemy import delete, select, func
+from sqlalchemy import delete, select, func, case
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 from telegram import Update
@@ -1149,6 +1149,24 @@ async def last_week_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     since = datetime.now(timezone.utc) - timedelta(days=7)
     rows = await _fetch_cycle_leaderboard(10, since=since)
     await _send_cycle_leaderboard(update, settings, rows, "Top 10 agents — last 7 days")
+
+
+async def _get_or_create_group_setting(
+    session: AsyncSession,
+    chat_id: int,
+    default_retention_minutes: int,
+) -> GroupSetting:
+    result = await session.execute(select(GroupSetting).where(GroupSetting.chat_id == chat_id))
+    setting = result.scalar_one_or_none()
+    if setting is None:
+        setting = GroupSetting(
+            chat_id=chat_id,
+            privacy_mode=GroupPrivacyMode.public.value,
+            retention_minutes=max(default_retention_minutes, 0),
+        )
+        session.add(setting)
+        await session.flush()
+    return setting
 
 
 async def store_group_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
