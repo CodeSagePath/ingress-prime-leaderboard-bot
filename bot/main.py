@@ -25,9 +25,10 @@ from telegram.ext import (
     filters,
 )
 
-from .config import Settings, load_settings
+from .config import Settings, load_settings, validate_settings, print_environment_summary
 from .dashboard import create_dashboard_app
 from .database import build_engine, build_session_factory, init_models, session_scope
+from .health import get_health_checker, create_health_check_response
 from .jobs.deletion import cleanup_expired_group_messages, schedule_message_deletion
 from .jobs.backup import perform_backup, manual_backup_command
 from .models import Agent, GroupMessage, GroupPrivacyMode, GroupSetting, PendingAction, Submission, WeeklyStat, UserSetting
@@ -37,7 +38,7 @@ from .utils.beta_tokens import get_token_status_message, update_medal_requiremen
 logger = logging.getLogger(__name__)
 
 CURRENT_CYCLE_FILE = Path(__file__).resolve().parent.parent / "current_cycle.txt"
-AGENTS_DB_PATH = Path(__file__).resolve().parent / "agents.db"
+AGENTS_DB_PATH = Path(__file__).resolve().parent.parent / "data" / "agents.db"
 
 
 def _ensure_agents_table() -> None:
@@ -1921,14 +1922,94 @@ async def betatokens_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def build_application() -> Application:
     load_dotenv()
-    logging.basicConfig(level=logging.WARNING)
+
+    # Load and validate settings
     settings = load_settings()
+
+    # Print environment summary in development mode
+    if settings.environment == "development":
+        print_environment_summary(settings)
+
+    # Validate configuration
+    validation_errors = validate_settings(settings)
+    if validation_errors:
+        logger.error("Configuration validation failed:")
+        for error in validation_errors:
+            logger.error(f"  - {error}")
+        print(f"\n❌ Configuration validation failed:\n{chr(10).join(f'  - {error}' for error in validation_errors)}")
+        print("\nPlease fix these issues before starting the bot.")
+        sys.exit(1)
+
+    # Set up logging
+    log_level = getattr(logging, settings.server.log_level.upper(), logging.INFO)
+    logging.basicConfig(
+        level=log_level,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+
+    # Add file logging if enabled
+    if settings.monitoring.log_to_file:
+        try:
+            from logging.handlers import RotatingFileHandler
+            log_file = Path(settings.monitoring.log_file_path)
+            log_file.parent.mkdir(parents=True, exist_ok=True)
+
+            file_handler = RotatingFileHandler(
+                log_file,
+                maxBytes=int(settings.monitoring.log_max_size.replace('MB', '')) * 1024 * 1024,
+                backupCount=settings.monitoring.log_backup_count
+            )
+            file_handler.setFormatter(
+                logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+            )
+
+            root_logger = logging.getLogger()
+            root_logger.addHandler(file_handler)
+
+        except Exception as e:
+            logger.warning(f"Failed to set up file logging: {e}")
+
+    logger.info(f"Starting {settings.bot_name} in {settings.environment} mode")
+
+    # Initialize database
     engine = build_engine(settings)
     session_factory = build_session_factory(engine)
     await init_models(engine)
-    redis_conn = Redis.from_url(settings.redis_url)
+
+    # Initialize Redis
+    redis_conn = Redis.from_url(
+        settings.redis.url,
+        socket_timeout=settings.redis.socket_timeout,
+        socket_connect_timeout=settings.redis.socket_connect_timeout,
+        retry_on_timeout=settings.redis.retry_on_timeout
+    )
     queue = Queue(connection=redis_conn)
+
+    # Test connections
+    try:
+        # Test database connection
+        async with session_factory() as session:
+            await session.execute(text("SELECT 1"))
+        logger.info("Database connection successful")
+
+        # Test Redis connection
+        redis_conn.ping()
+        logger.info("Redis connection successful")
+
+    except Exception as e:
+        logger.error(f"Failed to connect to database/Redis: {e}")
+        print(f"\n❌ Connection failed: {e}")
+        print("Please check your configuration and ensure all services are running.")
+        sys.exit(1)
+
+    # Initialize scheduler
     scheduler = AsyncIOScheduler(timezone=timezone.utc)
+
+    # Initialize health checker
+    health_checker = get_health_checker(settings)
+
+    # Build Telegram application
     application = ApplicationBuilder().token(settings.telegram_token).build()
     application.bot_data["settings"] = settings
     application.bot_data["engine"] = engine
@@ -1936,6 +2017,8 @@ async def build_application() -> Application:
     application.bot_data["queue"] = queue
     application.bot_data["redis_connection"] = redis_conn
     application.bot_data["scheduler"] = scheduler
+    application.bot_data["health_checker"] = health_checker
+
     configure_handlers(application)
     scheduler.add_job(
         cleanup_expired_group_messages,
@@ -2001,23 +2084,84 @@ async def build_application() -> Application:
 
 
 async def async_main() -> None:
-    application = await build_application()
-    
-    async with application:
-        await application.start()
-        await application.updater.start_polling()
-        
-        try:
-            # Keep the bot running
-            await asyncio.Event().wait()
-        except KeyboardInterrupt:
-            pass
-        finally:
-            await application.updater.stop()
+    print("🤖 Starting Ingress Prime Leaderboard Bot...")
+
+    try:
+        application = await build_application()
+        settings = application.bot_data["settings"]
+        health_checker = application.bot_data["health_checker"]
+
+        # Perform startup health check
+        print("🔍 Performing startup health check...")
+        health_status = await health_checker.comprehensive_health_check()
+
+        if health_status["status"] == "unhealthy":
+            print("❌ Startup health check failed:")
+            for check_name, check_result in health_status["checks"].items():
+                if check_result["status"] == "unhealthy":
+                    print(f"  - {check_name}: {check_result.get('message', 'Unknown error')}")
+            print("\nPlease resolve these issues before starting the bot.")
+            sys.exit(1)
+        elif health_status["status"] == "warning":
+            print("⚠️  Startup health check completed with warnings:")
+            for check_name, check_result in health_status["checks"].items():
+                if check_result["status"] == "warning":
+                    print(f"  - {check_name}: {check_result.get('message', 'Warning')}")
+
+        print(f"✅ Health check passed - Bot starting in {settings.environment} mode")
+
+        # Start the bot
+        async with application:
+            await application.start()
+            await application.updater.start_polling()
+
+            print(f"🚀 {settings.bot_name} is now running!")
+            print(f"📊 Environment: {settings.environment}")
+            print(f"🔗 Dashboard: {'Enabled on port ' + str(settings.dashboard_port) if settings.dashboard_enabled else 'Disabled'}")
+
+            # Add periodic health check job
+            scheduler = application.bot_data["scheduler"]
+            if settings.monitoring.health_check_enabled:
+                scheduler.add_job(
+                    lambda: asyncio.create_task(health_checker.comprehensive_health_check()),
+                    trigger="interval",
+                    minutes=5,
+                    max_instances=1,
+                    misfire_grace_time=60,
+                    coalesce=True,
+                )
+                print("💓 Health monitoring enabled (every 5 minutes)")
+
+            scheduler.start()
+
+            try:
+                # Keep the bot running
+                await asyncio.Event().wait()
+            except KeyboardInterrupt:
+                print("\n🛑 Shutting down bot...")
+            finally:
+                print("🔄 Stopping components...")
+                await application.updater.stop()
+                print("✅ Bot stopped successfully")
+
+    except KeyboardInterrupt:
+        print("\n🛑 Bot interrupted by user")
+    except Exception as e:
+        print(f"\n❌ Fatal error: {e}")
+        logger.error(f"Fatal error during startup: {e}", exc_info=True)
+        sys.exit(1)
 
 
 def main() -> None:
-    asyncio.run(async_main())
+    """Main entry point with proper error handling."""
+    try:
+        asyncio.run(async_main())
+    except KeyboardInterrupt:
+        print("\n👋 Goodbye!")
+        sys.exit(0)
+    except Exception as e:
+        print(f"\n💥 Unexpected error: {e}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

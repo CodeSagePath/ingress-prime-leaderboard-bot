@@ -26,11 +26,11 @@ def run_bot(logger):
     import time
     while True:
         try:
-            result = subprocess.run([sys.executable, "-m", "bot.main"], check=False)
+            result = subprocess.run([sys.executable, "main.py"], check=False)
             if result.returncode == 0:
-                logger.info("bot.main exited with code 0, relaunching")
+                logger.info("main.py exited with code 0, relaunching")
             else:
-                logger.error("bot.main exited with code %s, relaunching", result.returncode)
+                logger.error("main.py exited with code %s, relaunching", result.returncode)
         except Exception:
             logger.exception("bot main execution failed, relaunching")
         
