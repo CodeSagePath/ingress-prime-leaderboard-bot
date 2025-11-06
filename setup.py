@@ -14,7 +14,7 @@ with open("requirements.txt", "r", encoding="utf-8") as fh:
 setup(
     name="ingress-prime-leaderboard-bot",
     version="1.0.0",
-    author="Ingress Leaderboard Team",
+    author="CodeSagePath",
     author_email="studymailr@gmail.com",
     description="A Telegram bot for tracking Ingress Prime player statistics and leaderboards",
     long_description=long_description,
