@@ -568,20 +568,115 @@ def parse_submission(payload: str) -> tuple[int, dict[str, Any]]:
     return ap, metrics
 
 
+def _create_flexible_header_map(header_line: str) -> tuple[str, ...]:
+    """
+    Create a flexible header mapping that can handle varying column configurations.
+
+    This function tries to match the provided header line against known column sets,
+    but also handles cases where columns are missing, in different order, or have slight variations.
+    """
+    # First try exact match with existing header maps
+    headers_tuple = SPACE_SEPARATED_HEADER_MAP.get(header_line)
+    if headers_tuple:
+        return headers_tuple
+
+    # If no exact match, try to parse flexible headers
+    # The challenge is that column names can be multi-word but are separated by spaces
+    # We need to intelligently reconstruct the column boundaries
+
+    # Start with known column sets and try to match what we can
+    template_columns = list(SPACE_SEPARATED_COLUMN_SETS[0])
+
+    # Define essential columns that must be present
+    essential_columns = ["Time Span", "Agent Name", "Agent Faction"]
+
+    # Try to match essential columns in the header line
+    found_essential = []
+    remaining_header = header_line
+
+    for essential in essential_columns:
+        if essential in remaining_header:
+            found_essential.append(essential)
+            remaining_header = remaining_header.replace(essential, "", 1).strip()
+
+    if len(found_essential) < 3:
+        # Try case-insensitive matching
+        remaining_header_lower = header_line.lower()
+        for essential in essential_columns:
+            if essential.lower() in remaining_header_lower:
+                found_essential.append(essential)
+                remaining_header_lower = remaining_header_lower.replace(essential.lower(), "", 1).strip()
+
+        if len(found_essential) < 3:
+            raise ValueError(f"Missing essential columns. Could not find: Time Span, Agent Name, and Agent Faction")
+
+    # Now try to match other known columns
+    final_headers = found_essential.copy()
+    remaining_tokens = remaining_header.split()
+
+    # Try to match remaining tokens against known column patterns
+    i = 0
+    while i < len(remaining_tokens):
+        token = remaining_tokens[i]
+        best_match = None
+        max_match_length = 0
+
+        # Look for the longest possible match starting at this position
+        for template_col in template_columns:
+            if template_col in found_essential or template_col in final_headers:
+                continue
+
+            # Check if this column starts with the current token
+            if template_col.startswith(token):
+                # Look ahead to see if we can match more tokens
+                words_needed = len(template_col.split())
+                if i + words_needed <= len(remaining_tokens):
+                    candidate_tokens = remaining_tokens[i:i + words_needed]
+                    candidate = " ".join(candidate_tokens)
+                    if candidate == template_col:
+                        if len(candidate) > max_match_length:
+                            best_match = candidate
+                            max_match_length = len(candidate)
+
+        if best_match:
+            final_headers.append(best_match)
+            i += len(best_match.split())
+        else:
+            # Unknown column - add it as is
+            final_headers.append(token)
+            i += 1
+
+    return tuple(final_headers)
+
+
 def _parse_space_separated_dataset(lines: list[str]) -> dict[str, str]:
     header_line = lines[0]
+
+    # Try to get exact match first
     headers_tuple = SPACE_SEPARATED_HEADER_MAP.get(header_line)
+
+    # If no exact match, try flexible mapping
     if not headers_tuple:
-        raise ValueError("Unsupported header format")
+        try:
+            headers_tuple = _create_flexible_header_map(header_line)
+        except ValueError as e:
+            raise ValueError(f"Unsupported header format: {e}")
+
     headers = list(headers_tuple)
     data_line = next((line for line in lines[1:] if line.strip()), None)
     if data_line is None:
         raise ValueError("Data must contain at least one data row")
     if not data_line.split():
         raise ValueError("Data row is empty")
+
+    # Try to parse with the exact headers first
     row_map = _parse_space_separated_row(data_line, headers)
     if row_map is None:
-        raise ValueError("Data row has unexpected number of columns")
+        # If that fails, try flexible parsing
+        row_map = _parse_space_separated_row_flexible(data_line, headers)
+        if row_map is None:
+            raise ValueError("Data row has unexpected number of columns")
+
     data_dict: dict[str, str] = {}
     for column in headers:
         if column in SPACE_SEPARATED_IGNORED_COLUMNS:
@@ -681,6 +776,85 @@ def _parse_space_separated_row(row: str, headers: list[str]) -> dict[str, str] |
     return data
 
 
+def _parse_space_separated_row_flexible(row: str, headers: list[str]) -> dict[str, str] | None:
+    """
+    Flexible row parsing that can handle varying numbers of columns.
+
+    This function tries to map the data row to the available headers, allowing for
+    missing columns or columns in different order.
+    """
+    tokens = row.split()
+    if not tokens:
+        return None
+
+    # Find time span
+    time_span = None
+    position = 0
+    max_span_tokens = min(len(tokens), 4)
+    for end in range(max_span_tokens, 0, -1):
+        candidate = " ".join(tokens[:end])
+        upper_candidate = candidate.upper()
+        if upper_candidate in TIME_SPAN_ALIASES:
+            time_span = TIME_SPAN_ALIASES[upper_candidate]
+            position = end
+            break
+    if time_span is None:
+        return None
+
+    # Find agent name and faction
+    name_tokens: list[str] = []
+    while position < len(tokens) and tokens[position].upper() not in FACTION_ALIASES:
+        name_tokens.append(tokens[position])
+        position += 1
+    if not name_tokens or position >= len(tokens):
+        return None
+
+    faction_token = tokens[position]
+    position += 1
+    if faction_token.upper() not in FACTION_ALIASES:
+        return None
+
+    agent_name = " ".join(name_tokens)
+
+    # Find date, time, and level
+    if len(tokens) - position < 3:
+        return None
+
+    date_token = tokens[position]
+    position += 1
+    time_token = tokens[position]
+    position += 1
+    level_token = tokens[position]
+    position += 1
+
+    remaining_tokens = tokens[position:]
+    data: dict[str, str] = {
+        "Time Span": time_span,
+        "Agent Name": agent_name,
+        "Agent Faction": faction_token,
+        "Date (yyyy-mm-dd)": date_token,
+        "Time (hh:mm:ss)": time_token,
+        "Level": level_token,
+    }
+
+    # Map remaining tokens to headers, allowing for flexibility
+    expected_remaining_headers = [h for h in headers if h not in data]
+
+    if len(remaining_tokens) != len(expected_remaining_headers):
+        # If the numbers don't match exactly, try to map as many as possible
+        for i, (header, value) in enumerate(zip(expected_remaining_headers, remaining_tokens)):
+            data[header] = value
+        # Add any extra tokens as "Unknown Column X"
+        for i, extra_token in enumerate(remaining_tokens[len(expected_remaining_headers):], 1):
+            data[f"Unknown Column {i}"] = extra_token
+    else:
+        # Perfect match - map one-to-one
+        for header, value in zip(expected_remaining_headers, remaining_tokens):
+            data[header] = value
+
+    return data
+
+
 def _process_field_value(key: str, value: str) -> Any:
     if key == "time_span":
         upper_value = value.upper()
@@ -724,7 +898,11 @@ def parse_ingress_message(text: str) -> dict[str, Any] | list[dict[str, Any]] | 
     else:
         headers_tuple = SPACE_SEPARATED_HEADER_MAP.get(header_line)
         if not headers_tuple:
-            return None
+            # Try flexible mapping for non-tabular data
+            try:
+                headers_tuple = _create_flexible_header_map(header_line)
+            except ValueError:
+                return None
         headers = [column for column in headers_tuple if column not in SPACE_SEPARATED_IGNORED_COLUMNS]
     cycle_indices = [index for index, header in enumerate(headers) if header.startswith("+")]
     if not cycle_indices:
@@ -758,7 +936,10 @@ def parse_ingress_message(text: str) -> dict[str, Any] | list[dict[str, Any]] | 
         else:
             row_map = _parse_space_separated_row(data_line, headers)
             if row_map is None:
-                continue
+                # Try flexible parsing if exact parsing fails
+                row_map = _parse_space_separated_row_flexible(data_line, headers)
+                if row_map is None:
+                    continue
         date_value = ""
         for header in date_headers:
             if header in row_map:
@@ -812,11 +993,22 @@ def parse_tab_space_data(data: str) -> tuple[int, dict[str, Any], str]:
         headers = tuple(part.strip() for part in header_line.split('\t'))
         matched_columns = next((columns for columns in SPACE_SEPARATED_COLUMN_SETS if columns == headers), None)
         if matched_columns is None:
-            raise ValueError("Unsupported header format")
+            # Try flexible mapping for tab-separated data
+            try:
+                matched_columns = _create_flexible_header_map(header_line)
+            except ValueError as e:
+                raise ValueError(f"Unsupported header format: {e}")
         values = [part.strip() for part in lines[1].split('\t')]
         if len(values) != len(matched_columns):
-            raise ValueError("Data row has unexpected number of columns")
-        data_dict = {column: value for column, value in zip(matched_columns, values) if column not in SPACE_SEPARATED_IGNORED_COLUMNS}
+            # Try flexible parsing if the counts don't match exactly
+            data_dict = {}
+            for i, (header, value) in enumerate(zip(matched_columns, values)):
+                data_dict[header] = value
+            # Add any extra values as unknown columns
+            for i, extra_value in enumerate(values[len(matched_columns):], 1):
+                data_dict[f"Unknown Column {i}"] = extra_value
+        else:
+            data_dict = {column: value for column, value in zip(matched_columns, values) if column not in SPACE_SEPARATED_IGNORED_COLUMNS}
     else:
         data_dict = _parse_space_separated_dataset(lines)
     if "Agent Name" not in data_dict:
@@ -875,9 +1067,19 @@ async def handle_ingress_message(update: Update, context: ContextTypes.DEFAULT_T
     text = message.text or message.caption or ""
     if not text.strip():
         return
+
+    # Check if this is a reply to a submit instruction (improved user experience)
+    is_reply_to_submit = False
+    if message.reply_to_message and message.reply_to_message.text:
+        reply_text = message.reply_to_message.text.lower()
+        if "stats submission" in reply_text or "ingress prime export data" in reply_text:
+            is_reply_to_submit = True
+
     chat = getattr(update, "effective_chat", None)
     chat_type = getattr(chat, "type", None)
-    if chat_type in {"group", "supergroup"}:
+
+    # For groups, require bot mention unless it's a reply to submit instructions
+    if chat_type in {"group", "supergroup"} and not is_reply_to_submit:
         bot_username = context.bot_data.get("bot_username")
         if not bot_username:
             me = await context.bot.get_me()
@@ -887,22 +1089,68 @@ async def handle_ingress_message(update: Update, context: ContextTypes.DEFAULT_T
             return
         if f"@{bot_username.lower()}" not in text.lower():
             return
+
+    # Check if this looks like Ingress Prime data (has common patterns)
+    is_ingress_data = (
+        "time span" in text.lower() and
+        "agent name" in text.lower() and
+        ("lifetime ap" in text.lower() or "all time" in text.lower())
+    )
+
+    if not is_ingress_data and not is_reply_to_submit:
+        # Only provide helpful error if it's clearly not ingress data
+        return
+
     parsed = parse_ingress_message(text)
     if not parsed:
-        await message.reply_text("❌ Format incorrect. Use the standard format")
+        # Provide more helpful error messages
+        if is_ingress_data:
+            error_msg = (
+                "❌ *Data format issue detected*\n\n"
+                "Please make sure you're pasting the complete data from Ingress Prime:\n"
+                "• Include both the header line (Time Span Agent Name...)\n"
+                "• Include your data line (ALL TIME YourName...)\n"
+                "• Copy exactly as shown in the app\n\n"
+                "💡 *Use /submit to see the format example*"
+            )
+            await message.reply_text(error_msg, parse_mode="Markdown")
+        else:
+            await message.reply_text("❌ Please use /submit first, then paste your Ingress Prime data as a reply.")
         return
+
     entries = [parsed] if isinstance(parsed, dict) else parsed
     saved = False
+    successful_entries = []
+
     for entry in entries:
         if isinstance(entry, dict):
             if not save_to_db(entry):
-                await message.reply_text("⚠️ Duplicate entry ignored")
+                await message.reply_text("⚠️ Duplicate entry - this data has already been recorded")
                 return
             saved = True
+            successful_entries.append(entry)
+
     if not saved:
-        await message.reply_text("❌ Format incorrect. Use the standard format")
+        await message.reply_text("❌ No valid data found. Please check your format.")
         return
-    await message.reply_text("✅ Data recorded")
+
+    # Success message with details
+    if len(successful_entries) == 1:
+        entry = successful_entries[0]
+        agent_name = entry.get('agent_name', 'Unknown')
+        lifetime_ap = entry.get('lifetime_ap', 'Unknown')
+        cycle_points = entry.get('cycle_points', 'N/A')
+
+        success_msg = (
+            f"✅ *Stats recorded successfully!*\n\n"
+            f"👤 *Agent:* {agent_name}\n"
+            f"⚡ *Lifetime AP:* {lifetime_ap:,}\n"
+            f"🏆 *Cycle Points:* {cycle_points}"
+        )
+    else:
+        success_msg = f"✅ *{len(successful_entries)} entries recorded successfully!*"
+
+    await message.reply_text(success_msg, parse_mode="Markdown")
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -917,48 +1165,64 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         help_text = (
             "🤖 *PrimeStatsBot Help* 🤖\n\n"
             "📊 *MAIN COMMANDS:*\n"
-              "• /submit <data> - Submit your stats\n"
+              "• /submit - Submit your Ingress Prime stats\n"
             "• /leaderboard - View rankings\n"
             "• /myrank - Check your rank\n"
             ""
             "📈 *LEADERBOARD OPTIONS:*\n"
-            "• /leaderboard weekly - This week\n"
-            "• /leaderboard hacks - By hacks\n"
-            "• /leaderboard weekly hacks - Combined\n\n"
+            "• /leaderboard - All time AP (default)\n"
+            "• /leaderboard weekly - Weekly AP\n"
+            "• /leaderboard hacks - Top hackers\n"
+            "• /leaderboard weekly hacks - Weekly hackers\n"
+            "• /leaderboard xm - Top XM collectors\n"
+            "• /leaderboard portals - Top portal capturers\n"
+            "• /leaderboard links - Top link creators\n"
+            "• /leaderboard fields - Top field creators\n"
+            "• /leaderboard distance - Top distance walkers\n\n"
             "🎯 *OTHER USEFUL:*\n"
             "• /top ENL or /top RES - Faction tops\n"
             "• /top10 - Global top 10\n"
             "• /settings - Configure display\n"
             "• /help - Show this help\n\n"
-            "💡 *EXAMPLES:*\n"
-            "• /submit ap=1000000 hacks=5000\n"
-            "• /myrank weekly\n"
-            "• /leaderboard xm_collected"
+            "📋 *SUBMIT FORMAT:*\n"
+            "Copy your data from Ingress Prime app and paste it:\n\n"
+            "Time Span Agent Name Agent Faction Date (yyyy-mm-dd) Time (hh:mm:ss) Level Lifetime AP ...\n"
+            "ALL TIME YourName Enlightened 2025-11-07 04:40:52 13 55000000 ...\n\n"
+            "💡 *Simply use /submit and reply with your data*"
         )
         await update.message.reply_text(help_text)
     else:
-        # Simplified normal mode help (no complex markdown)
+        # Enhanced normal mode help
         help_text = (
-            "🤖 *PrimeStatsBot Help* 🤖\n\n"
-            "📊 *MAIN COMMANDS:*\n"
-              "• /submit <data> - Submit your stats\n"
+            "🤖 **PrimeStatsBot Help** 🤖\n\n"
+            "📊 **MAIN COMMANDS:**\n"
+              "• /submit - Submit your Ingress Prime stats\n"
             "• /leaderboard - View rankings\n"
             "• /myrank - Check your rank\n"
             ""
-            "📈 *LEADERBOARD OPTIONS:*\n"
-            "• /leaderboard weekly - This week\n"
-            "• /leaderboard hacks - By hacks\n"
-            "• /leaderboard weekly hacks - Combined\n\n"
-            "🎯 *OTHER USEFUL:*\n"
+            "📈 **LEADERBOARD OPTIONS:**\n"
+            "• /leaderboard - All time AP (default)\n"
+            "• /leaderboard weekly - Weekly AP\n"
+            "• /leaderboard hacks - Top hackers\n"
+            "• /leaderboard weekly hacks - Weekly hackers\n"
+            "• /leaderboard xm - Top XM collectors\n"
+            "• /leaderboard portals - Top portal capturers\n"
+            "• /leaderboard links - Top link creators\n"
+            "• /leaderboard fields - Top field creators\n"
+            "• /leaderboard distance - Top distance walkers\n\n"
+            "🎯 **OTHER USEFUL:**\n"
             "• /top ENL or /top RES - Faction tops\n"
             "• /top10 - Global top 10\n"
             "• /settings - Configure display\n"
             "• /help - Show this help\n\n"
-            "💡 *EXAMPLES:*\n"
-            "• /submit ap=1000000 hacks=5000\n"
-            "• /myrank weekly\n"
-            "• /leaderboard xm_collected\n\n"
-            "🔧 *ADMIN:* /privacy (groups) | /stats (admins)"
+            "📋 **SUBMIT FORMAT:**\n"
+            "Copy your data from Ingress Prime app and paste it:\n\n"
+            "```\n"
+            "Time Span Agent Name Agent Faction Date (yyyy-mm-dd) Time (hh:mm:ss) Level Lifetime AP ...\n"
+            "ALL TIME YourName Enlightened 2025-11-07 04:40:52 13 55000000 ...\n"
+            "```\n\n"
+            "💡 **Simply use /submit and reply with your data**\n\n"
+            "🔧 **ADMIN:** /privacy (groups) | /stats (admins)"
         )
         await update.message.reply_text(help_text)
 
@@ -1827,31 +2091,152 @@ def configure_handlers(application: Application) -> None:
 
 # Placeholder functions for missing core commands
 async def submit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /submit command - forwards to message handler."""
-    if update.message and update.message.text:
-        # Remove /submit from the beginning and process as regular message
-        text = update.message.text[7:].strip()  # Remove '/submit '
-        if text:
-            # Create a mock update with the text without the command
-            update.message.text = text
-            await handle_ingress_message(update, context)
-        else:
-            await update.message.reply_text(
-                "Usage: /submit ap=1000000 hacks=5000\n"
-                "Or paste your Ingress Prime export data"
-            )
+    """Handle /submit command - improved submission flow."""
+    if not update.message:
+        return
+
+    settings: Settings = context.application.bot_data["settings"]
+
+    # Send submission instructions
+    if settings.text_only_mode:
+        submit_text = (
+            "📊 *STATS SUBMISSION*\n\n"
+            "Please paste your Ingress Prime export data.\n\n"
+            "📋 *FORMAT EXAMPLE:*\n"
+            "Copy your data from Ingress Prime app and paste it exactly as shown:\n\n"
+            "Time Span Agent Name Agent Faction Date (yyyy-mm-dd) Time (hh:mm:ss) Level Lifetime AP Current AP ...\n"
+            "ALL TIME YourName Enlightened 2025-11-07 04:40:52 13 55000000 15000000 ...\n\n"
+            "✅ *Simply reply to this message with your data*\n"
+            "💡 *Make sure to include both the header line and your data line*"
+        )
+    else:
+        submit_text = (
+            "📊 **STATS SUBMISSION** 📊\n\n"
+            "Please paste your Ingress Prime export data.\n\n"
+            "📋 **FORMAT EXAMPLE:**\n"
+            "Copy your data from Ingress Prime app and paste it exactly as shown:\n\n"
+            "```\n"
+            "Time Span Agent Name Agent Faction Date (yyyy-mm-dd) Time (hh:mm:ss) Level Lifetime AP Current AP ...\n"
+            "ALL TIME YourName Enlightened 2025-11-07 04:40:52 13 55000000 15000000 ...\n"
+            "```\n\n"
+            "✅ **Simply reply to this message with your data**\n"
+            "💡 **Make sure to include both the header line and your data line**"
+        )
+
+    await update.message.reply_text(submit_text, parse_mode="Markdown" if not settings.text_only_mode else None)
 
 async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /leaderboard command - basic implementation."""
+    """Handle /leaderboard command with support for multiple metrics."""
     if not update.message:
         return
 
     settings: Settings = context.application.bot_data["settings"]
     session_factory = context.application.bot_data["session_factory"]
 
-    # Get basic leaderboard
-    rows = await _fetch_cycle_leaderboard(10)
-    await _send_cycle_leaderboard(update, settings, rows, "Top 10 agents")
+    # Parse command arguments
+    args = context.args if context.args else []
+    time_span = None
+    metric = "ap"  # default metric
+    limit = 10
+
+    # Parse arguments
+    for arg in args:
+        arg_lower = arg.lower()
+        if arg_lower in ["all", "all time", "lifetime"]:
+            time_span = "ALL TIME"
+        elif arg_lower in ["weekly", "week"]:
+            time_span = "WEEKLY"
+        elif arg_lower in ["monthly", "month"]:
+            time_span = "MONTHLY"
+        elif arg_lower in ["daily", "day"]:
+            time_span = "DAILY"
+        elif arg_lower in ["hacks", "hack"]:
+            metric = "hacks"
+        elif arg_lower in ["xm", "xm_collected", "xm collected"]:
+            metric = "xm_collected"
+        elif arg_lower in ["portals", "portals_captured", "portals captured"]:
+            metric = "portals_captured"
+        elif arg_lower in ["resonators", "resonators_deployed", "resonators deployed"]:
+            metric = "resonators_deployed"
+        elif arg_lower in ["links", "links_created", "links created"]:
+            metric = "links_created"
+        elif arg_lower in ["fields", "fields_created", "fields created"]:
+            metric = "fields_created"
+        elif arg_lower in ["mods", "mods_deployed", "mods deployed"]:
+            metric = "mods_deployed"
+        elif arg_lower in ["destroyed", "resonators_destroyed", "resonators destroyed"]:
+            metric = "resonators_destroyed"
+        elif arg_lower in ["neutralized", "portals_neutralized", "portals neutralized"]:
+            metric = "portals_neutralized"
+        elif arg_lower in ["distance", "distance_walked", "distance walked", "km"]:
+            metric = "distance_walked"
+        elif arg_lower.isdigit():
+            limit = min(int(arg_lower), 50)  # Max 50 entries
+        elif arg_lower == "top":
+            continue  # Skip 'top' keyword
+        else:
+            # Try to handle combined format like "weekly hacks"
+            if arg_lower in ["weekly", "week"]:
+                time_span = "WEEKLY"
+            elif arg_lower in ["monthly", "month"]:
+                time_span = "MONTHLY"
+            elif arg_lower in ["all", "all time", "lifetime"]:
+                time_span = "ALL TIME"
+
+    # Default to weekly if no time span specified for certain metrics
+    if time_span is None and metric != "ap":
+        time_span = "WEEKLY"
+
+    # Get the appropriate title
+    time_span_text = time_span if time_span else "ALL TIME"
+    metric_text = metric.replace("_", " ").title() if metric != "ap" else "AP"
+
+    if metric == "ap":
+        title = f"Top {limit} agents - {time_span_text}"
+    else:
+        title = f"Top {limit} agents - {metric_text} ({time_span_text})"
+
+    try:
+        # Use the comprehensive leaderboard service
+        from .services.leaderboard import get_leaderboard
+
+        chat_id = update.effective_chat.id if update.effective_chat else None
+
+        async with session_scope(session_factory) as session:
+            rows = await get_leaderboard(
+                session=session,
+                limit=limit,
+                chat_id=chat_id,
+                time_span=time_span,
+                metric=metric
+            )
+
+        if not rows:
+            await update.message.reply_text("No data available for the specified criteria.")
+            return
+
+        # Format the leaderboard
+        if settings.text_only_mode:
+            lines = [f"🏆 {title} 🏆"]
+            for index, (codename, faction, metric_value, metrics_dict) in enumerate(rows, start=1):
+                metric_display = f"{metric_value:,}" if isinstance(metric_value, int) else str(metric_value)
+                lines.append(f"{index}. {codename} [{faction}] - {metric_display}")
+            leaderboard_text = "\n".join(lines)
+        else:
+            lines = [f"🏆 *{title}* 🏆"]
+            for index, (codename, faction, metric_value, metrics_dict) in enumerate(rows, start=1):
+                metric_display = f"{metric_value:,}" if isinstance(metric_value, int) else str(metric_value)
+                lines.append(f"{index}. {escape_markdown_v2(codename)} \\[{faction}\\] — {metric_display}")
+            leaderboard_text = "\n".join(lines)
+
+        await update.message.reply_text(
+            leaderboard_text,
+            parse_mode="MarkdownV2" if not settings.text_only_mode else None
+        )
+
+    except Exception as e:
+        logger.error(f"Error fetching leaderboard: {e}")
+        await update.message.reply_text("❌ Error fetching leaderboard data. Please try again later.")
 
 async def top10_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /top10 command."""

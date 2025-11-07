@@ -1,29 +1,57 @@
 # Ingress Prime Leaderboard Bot
 
-An unofficial leaderboard bot for Ingress Prime game that allows players to track their AP (Access Points) and other metrics, compete with other agents, and view rankings.
+A comprehensive Telegram bot for Ingress Prime players that tracks AP (Access Points), multiple metrics, and provides competitive leaderboards with flexible submission formats.
 
 ## Table of Contents
 - [Project Description](#project-description)
+- [Key Features](#key-features)
 - [Setup Instructions](#setup-instructions)
 - [Environment Variables](#environment-variables)
 - [Commands](#commands)
+- [Leaderboard Capabilities](#leaderboard-capabilities)
+- [Submit Format](#submit-format)
+- [Flexible Column Support](#flexible-column-support)
 - [Backup Configuration](#backup-configuration)
 - [Deployment Instructions](#deployment-instructions)
 - [Troubleshooting](#troubleshooting)
 
 ## Project Description
 
-The Ingress Prime Leaderboard Bot is a Telegram bot designed to help Ingress Prime players track and compare their performance with other agents. Players can register with their codename and faction, submit their AP and other metrics, and view a leaderboard that ranks all participants.
+The Ingress Prime Leaderboard Bot is a feature-rich Telegram bot designed to help Ingress Prime players track and compare their performance across multiple metrics. The bot supports direct Ingress Prime data export pasting, comprehensive leaderboards, and works seamlessly with various column configurations.
 
 Key features:
-- Player registration with codename and faction (ENL or RES)
-- AP and metrics submission with flexible format
-- Automatic leaderboard generation
-- Configurable leaderboard size
-- Automatic message deletion for privacy
-- Background job processing using Redis Queue
+- **Direct Ingress Prime Export Support** - Paste data exactly as exported from the app
+- **Comprehensive Leaderboards** - Multiple metrics and time periods
+- **Flexible Column Mapping** - Works with 59, 67, 70+ column configurations
+- **User-Friendly Submission** - Reply-based submission flow with examples
+- **Multiple Metrics** - AP, hacks, XM collected, portals captured, links created, and more
+- **Time Period Support** - All time, weekly, monthly, daily rankings
+- **Smart Group Integration** - Reply detection and mention handling
+- **Automatic Data Validation** - Format checking and duplicate prevention
+- **Background Job Processing** - Redis Queue for efficient task management
 
-The bot is built with Python 3.11, uses SQLAlchemy with aiosqlite for database operations, Redis for background job processing, and the python-telegram-bot library for Telegram integration.
+The bot is built with Python 3.11+, uses SQLAlchemy with aiosqlite for database operations, Redis for background job processing, and the python-telegram-bot library for Telegram integration.
+
+## Key Features
+
+### 🚀 **Enhanced User Experience**
+- **Reply-Based Submission**: Use `/submit` and reply with your data (no more long commands)
+- **Clear Format Examples**: Bot shows exactly how Ingress Prime data should look
+- **Smart Group Handling**: No @mention needed when replying to submit instructions
+- **Detailed Confirmation**: See recorded stats with agent name, AP, and cycle points
+
+### 📊 **Comprehensive Leaderboards**
+- **Multiple Metrics**: AP, hacks, XM collected, portals captured, links created, fields created, distance walked, and more
+- **Time Periods**: All time, weekly, monthly, daily rankings
+- **Faction Support**: Filter by ENL/RES factions
+- **Custom Limits**: View top 5 to 50 agents
+
+### 🔧 **Technical Features**
+- **Flexible Column Mapping**: Handles any Ingress Prime export format (59-70+ columns)
+- **Smart Error Handling**: Clear guidance when format is incorrect
+- **Duplicate Detection**: Prevents double submissions
+- **Text Mode Support**: Optimized for older devices
+- **Privacy Controls**: Automatic message deletion and group privacy settings
 
 ## Setup Instructions
 
@@ -159,81 +187,240 @@ The bot supports the following commands:
 ### `/start`
 - **Description**: Welcome message and basic bot information
 - **Usage**: `/start`
-- **Example**: 
-  ```
-  User: /start
-  Bot: Welcome to the Ingress leaderboard bot. Use /register to begin.
-  ```
 
-### `/register`
-- **Description**: Register as a new agent with your codename and faction
-- **Usage**: `/register`
+### `/help`
+- **Description**: Display help message with all available commands and examples
+- **Usage**: `/help`
+
+### `/submit` ⭐ **New User-Friendly Flow**
+- **Description**: Submit your Ingress Prime stats with improved reply-based flow
+- **Usage**: `/submit` (then reply with your data)
 - **Process**:
-  1. Send `/register` to start the registration process
-  2. Enter your agent codename when prompted
-  3. Enter your faction (ENL or RES) when prompted
+  1. Send `/submit` to get format instructions
+  2. Reply to that message with your Ingress Prime export data
+  3. Bot confirms with your recorded stats
 - **Example**:
   ```
-  User: /register
-  Bot: Please send your agent codename.
-  User: Agent007
-  Bot: Send your faction (ENL or RES).
-  User: ENL
-  Bot: Registered Agent007 (ENL).
+  User: /submit
+  Bot: [Sends detailed instructions with format examples]
+  User: [Replies with Ingress Prime data]
+  Bot: ✅ Stats recorded successfully!
+      👤 Agent: YourName
+      ⚡ Lifetime AP: 55,000,000
+      🏆 Cycle Points: 970
   ```
 
-### `/submit`
-- **Description**: Submit your AP and other metrics
-- **Usage**: `/submit ap=<value> [metric1=value1] [metric2=value2] [...]`
-- **Format**: 
-  - Entries must be provided as key=value pairs
-  - Multiple entries can be separated by semicolons, newlines, or multiple spaces
-  - The `ap` field is required
-  - Other metrics can be any name=value pairs
+### `/leaderboard` 🏆 **Comprehensive Metrics Support**
+- **Description**: Display leaderboards with multiple metrics and time periods
+- **Usage**: `/leaderboard [time_period] [metric] [limit]`
 - **Examples**:
   ```
-  /submit ap=12345
-  /submit ap=12345; xm=67890
-  /submit ap=12345 xm=67890 links=100 fields=10
+  /leaderboard                    # All time AP (default)
+  /leaderboard weekly             # Weekly AP
+  /leaderboard hacks              # Top hackers (weekly)
+  /leaderboard xm                 # Top XM collectors
+  /leaderboard weekly hacks       # Weekly hackers
+  /leaderboard all links          # All time link creators
+  /leaderboard monthly portals 20 # Top 20 monthly portal capturers
   ```
 
-### `/leaderboard`
-- **Description**: Display the current leaderboard
-- **Usage**: `/leaderboard`
-- **Output**: Shows the top agents ranked by total AP, including their codename, faction, and total AP
-- **Example**:
+### `/myrank`
+- **Description**: Check your personal ranking
+- **Usage**: `/myrank [time_period] [metric]`
+- **Examples**:
   ```
-  User: /leaderboard
-  Bot: 1. Agent007 [ENL] — 1,234,567 AP
-      2. Agent008 [RES] — 1,100,000 AP
-      3. Agent009 [ENL] — 987,654 AP
+  /myrank                        # Your all time AP rank
+  /myrank weekly                 # Your weekly AP rank
+  /myrank hacks                  # Your hack rank
   ```
 
-### `/cancel`
-- **Description**: Cancel the current registration process
-- **Usage**: `/cancel` (only works during registration)
-- **Example**:
-  ```
-  User: /cancel
-  Bot: Registration cancelled.
-  ```
+### `/top10`
+- **Description**: Show top 10 agents (same as `/leaderboard`)
+- **Usage**: `/top10`
+
+### `/top <faction>`
+- **Description**: Show top agents for specific faction
+- **Usage**: `/top ENL` or `/top RES`
+
+### `/settings`
+- **Description**: Configure display preferences (date format, number format, leaderboard size, etc.)
+- **Usage**: `/settings`
+
+### `/betatokens`
+- **Description**: Check your Beta tokens status and requirements
+- **Usage**: `/betatokens`
+
+### `/privacy` (Groups Only)
+- **Description**: Configure group privacy settings (public/soft/strict)
+- **Usage**: `/privacy <mode>`
+- **Permissions**: Group admins only
+
+### `/stats` (Admin Only)
+- **Description**: Display usage statistics and bot performance
+- **Usage**: `/stats`
 
 ### `/backup` (Admin Only)
 - **Description**: Trigger a manual database backup
 - **Usage**: `/backup`
-- **Permissions**: Only available to admin users (configured with `ADMIN_USER_IDS`)
-- **Example**:
-  ```
-  User: /backup
-  Bot: Starting manual backup process...
-  Bot: ✅ Manual backup completed successfully.
-  ```
+- **Permissions**: Admin users only
+
+### `/broadcast` (Admin Only)
+- **Description**: Send broadcast message to all users
+- **Usage**: `/broadcast`
+
+## Leaderboard Capabilities
+
+The bot supports comprehensive leaderboard functionality with multiple metrics and time periods, going far beyond just AP-based rankings.
+
+### Supported Metrics
+
+**Primary Metrics:**
+- **AP (Action Points)** - Default metric, shows total action points
+- **Hacks** - Number of portal hacks performed
+- **XM Collected** - Total XM collected
+- **Portals Captured** - Number of portals captured
+- **Links Created** - Number of links created
+- **Fields Created** - Number of control fields created
+- **Distance Walked** - Total distance walked
+
+**Combat Metrics:**
+- **Resonators Destroyed** - Number of enemy resonators destroyed
+- **Portals Neutralized** - Number of enemy portals neutralized
+
+**Support Metrics:**
+- **Resonators Deployed** - Number of resonators deployed
+- **Mods Deployed** - Number of mods deployed
+
+### Time Periods
+
+- **ALL TIME** - Lifetime statistics (default for AP)
+- **WEEKLY** - This week's statistics (default for other metrics)
+- **MONTHLY** - This month's statistics
+- **DAILY** - Today's statistics
+
+### Command Examples
+
+```bash
+# Basic commands
+/leaderboard                    # All time AP leaderboard
+/leaderboard 20                 # Top 20 agents (all time AP)
+
+# Time period specific
+/leaderboard weekly             # Weekly AP leaderboard
+/leaderboard monthly            # Monthly AP leaderboard
+/leaderboard all                # All time AP leaderboard
+/leaderboard daily              # Daily AP leaderboard
+
+# Metric specific
+/leaderboard hacks              # Top hackers (weekly)
+/leaderboard xm                 # Top XM collectors (weekly)
+/leaderboard portals            # Top portal capturers (weekly)
+/leaderboard links              # Top link creators (weekly)
+/leaderboard fields             # Top field creators (weekly)
+/leaderboard distance           # Top distance walkers (weekly)
+
+# Combined commands
+/leaderboard weekly hacks       # Weekly hackers leaderboard
+/leaderboard monthly xm         # Monthly XM collectors
+/leaderboard all links          # All time link creators
+/leaderboard weekly 15          # Top 15 weekly hackers
+```
+
+### Features
+
+- **Smart Defaults**: AP defaults to ALL TIME, other metrics default to WEEKLY
+- **Flexible Arguments**: Arguments can be in any order, multiple synonyms supported
+- **Number Formatting**: Numbers formatted with commas (e.g., 1,234,567)
+- **Faction Display**: Shows agent faction [ENL]/[RES] tags
+- **Performance**: Text-only mode available for older devices
+
+## Submit Format
+
+The bot now uses an improved reply-based submission flow that's much more user-friendly:
+
+### New Submit Flow (Recommended)
+
+1. **Send `/submit` command**
+   ```
+   User: /submit
+   ```
+
+2. **Bot sends detailed instructions**
+   ```
+   📊 **STATS SUBMISSION** 📊
+
+   Please paste your Ingress Prime export data.
+
+   📋 **FORMAT EXAMPLE:**
+   Copy your data from Ingress Prime app and paste it exactly as shown:
+
+   ```
+   Time Span Agent Name Agent Faction Date (yyyy-mm-dd) Time (hh:mm:ss) Level Lifetime AP Current AP ...
+   ALL TIME YourName Enlightened 2025-11-07 04:40:52 13 55000000 15000000 ...
+   ```
+
+   ✅ **Simply reply to this message with your data**
+   💡 **Make sure to include both the header line and your data line**
+   ```
+
+3. **Reply with your data**
+   ```
+   User: [Replies with Ingress Prime export data]
+   ```
+
+4. **Bot confirms with details**
+   ```
+   ✅ **Stats recorded successfully!**
+
+   👤 **Agent:** YourName
+   ⚡ **Lifetime AP:** 55,000,000
+   🏆 **Cycle Points:** 970
+   ```
+
+### Benefits
+
+- **No More Long Commands**: Simply use `/submit` and reply
+- **Clear Examples**: See exactly what format to use
+- **Better Group Experience**: No @mention needed when replying to instructions
+- **Detailed Confirmation**: See your recorded stats immediately
+- **Flexible Format**: Works with any column configuration (59, 67, 70+ columns)
+
+## Flexible Column Support
+
+The bot supports flexible column mapping that can handle varying Ingress Prime export configurations while maintaining compatibility with existing formats.
+
+### Problem Solved
+
+Previously, users with different column configurations (59, 67, 70+ columns) would get "Unsupported header format" errors when trying to submit their data.
+
+### Solution
+
+Implemented intelligent column mapping that:
+
+- **Essential Column Detection**: Ensures required columns (Time Span, Agent Name, Agent Faction) are present
+- **Smart Column Matching**: Uses look-ahead matching to identify multi-word column names
+- **Graceful Error Handling**: Provides clear error messages when essential columns are missing
+- **Flexible Column Count**: Handles varying numbers of columns (fewer or more than expected)
+- **Unknown Column Handling**: Preserves unexpected columns with clear labeling
+
+### Supported Configurations
+
+✅ **59-column configuration** - Successfully parsed
+✅ **67-column configuration** - Successfully parsed
+✅ **70-column configuration** - Successfully parsed
+✅ **Minimal configurations** - Successfully handled missing optional columns
+✅ **Different column orders** - Successfully parsed
+✅ **Unknown columns** - Handled gracefully
+
+### Backward Compatibility
+
+- ✅ All existing predefined column formats continue to work exactly as before
+- ✅ No breaking changes to existing functionality
+- ✅ Graceful fallback to original parsing methods
 
 ## Backup Configuration
 
 The bot supports automatic database backups to cloud storage services using rclone. This feature helps protect your data by creating regular backups that can be restored if needed.
-
-For detailed instructions on setting up and configuring backups, see [BACKUP.md](BACKUP.md).
 
 ### Key Features
 
@@ -243,6 +430,17 @@ For detailed instructions on setting up and configuring backups, see [BACKUP.md]
 - **Retention Policy**: Automatically clean up old backups based on configurable retention
 - **Manual Backups**: Admin users can trigger manual backups using the `/backup` command
 - **Admin Notifications**: Get notified when backups succeed or fail
+
+### Backup Environment Variables
+
+| Variable | Description | Default | Example |
+|----------|-------------|---------|---------|
+| `BACKUP_ENABLED` | Enable/disable remote backups | `false` | `true` |
+| `BACKUP_RCLONE_REMOTE` | Rclone remote name for cloud storage | `""` (empty) | `gdrive` |
+| `BACKUP_DESTINATION_PATH` | Backup destination path on remote storage | `ingress-bot-backups` | `my-bot-backups` |
+| `BACKUP_SCHEDULE` | Backup schedule (daily or weekly) | `daily` | `weekly` |
+| `BACKUP_RETENTION_COUNT` | Number of backups to retain | `7` | `14` |
+| `BACKUP_COMPRESS` | Compress backup files | `true` | `false` |
 
 ### Quick Setup
 
@@ -267,8 +465,6 @@ For detailed instructions on setting up and configuring backups, see [BACKUP.md]
    ```
 
 4. Restart the bot to apply the configuration
-
-For more detailed information, troubleshooting, and advanced configuration options, please refer to the [BACKUP.md](BACKUP.md) documentation.
 
 ## Deployment Instructions
 
