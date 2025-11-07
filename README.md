@@ -184,89 +184,100 @@ DATABASE_URL=postgresql+asyncpg://user:password@localhost/ingress_bot
 
 The bot supports the following commands:
 
-### `/start`
-- **Description**: Welcome message and basic bot information
-- **Usage**: `/start`
+### **User Commands**
 
-### `/help`
-- **Description**: Display help message with all available commands and examples
-- **Usage**: `/help`
+**/start** - Welcome message and basic bot information
 
-### `/submit` ⭐ **New User-Friendly Flow**
-- **Description**: Submit your Ingress Prime stats with improved reply-based flow
-- **Usage**: `/submit` (then reply with your data)
-- **Process**:
-  1. Send `/submit` to get format instructions
-  2. Reply to that message with your Ingress Prime export data
-  3. Bot confirms with your recorded stats
-- **Example**:
-  ```
-  User: /submit
-  Bot: [Sends detailed instructions with format examples]
-  User: [Replies with Ingress Prime data]
-  Bot: ✅ Stats recorded successfully!
-      👤 Agent: YourName
-      ⚡ Lifetime AP: 55,000,000
-      🏆 Cycle Points: 970
-  ```
+**/help** - Display help message with all available commands and examples
 
-### `/leaderboard` 🏆 **Comprehensive Metrics Support**
-- **Description**: Display leaderboards with multiple metrics and time periods
-- **Usage**: `/leaderboard [time_period] [metric] [limit]`
-- **Examples**:
-  ```
-  /leaderboard                    # All time AP (default)
-  /leaderboard weekly             # Weekly AP
-  /leaderboard hacks              # Top hackers (weekly)
-  /leaderboard xm                 # Top XM collectors
-  /leaderboard weekly hacks       # Weekly hackers
-  /leaderboard all links          # All time link creators
-  /leaderboard monthly portals 20 # Top 20 monthly portal capturers
-  ```
+**/submit** - Submit your Ingress Prime stats with improved reply-based flow (send /submit, then reply with your data)
 
-### `/myrank`
-- **Description**: Check your personal ranking
-- **Usage**: `/myrank [time_period] [metric]`
-- **Examples**:
-  ```
-  /myrank                        # Your all time AP rank
-  /myrank weekly                 # Your weekly AP rank
-  /myrank hacks                  # Your hack rank
-  ```
+**/leaderboard** - Display leaderboards with multiple metrics and time periods
 
-### `/top10`
-- **Description**: Show top 10 agents (same as `/leaderboard`)
-- **Usage**: `/top10`
+**/myrank** - Check your personal ranking
 
-### `/top <faction>`
-- **Description**: Show top agents for specific faction
-- **Usage**: `/top ENL` or `/top RES`
+**/top10** - Show top 10 agents (same as /leaderboard)
 
-### `/settings`
-- **Description**: Configure display preferences (date format, number format, leaderboard size, etc.)
-- **Usage**: `/settings`
+**/top <faction>** - Show top agents for specific faction (ENL or RES)
 
-### `/betatokens`
-- **Description**: Check your Beta tokens status and requirements
-- **Usage**: `/betatokens`
+**/settings** - Configure display preferences (date format, number format, leaderboard size, etc.)
 
-### `/privacy` (Groups Only)
-- **Description**: Configure group privacy settings (public/soft/strict)
-- **Usage**: `/privacy <mode>`
-- **Permissions**: Group admins only
+**/betatokens** - Check your Beta tokens status and requirements
 
-### `/stats` (Admin Only)
-- **Description**: Display usage statistics and bot performance
-- **Usage**: `/stats`
+### **Group Commands**
 
-### `/backup` (Admin Only)
-- **Description**: Trigger a manual database backup
-- **Usage**: `/backup`
-- **Permissions**: Admin users only
+**/privacy** - Configure group privacy settings (public/soft/strict) - Group admins only
 
-### `/broadcast` (Admin Only)
-- **Description**: Send broadcast message to all users
-- **Usage**: `/broadcast`
+### **Admin Commands**
+
+**/stats** - Display usage statistics and bot performance - Admin users only
+
+**/backup** - Trigger a manual database backup - Admin users only
+
+**/broadcast** - Send broadcast message to all users - Admin users only
+
+### **Command Usage Examples**
+
+**Basic Commands**
+```
+/start                          # Welcome message
+/help                           # Show help and examples
+/submit                         # Start submission flow
+/top10                          # Show top 10 agents
+/top ENL                        # Top Enlightened agents
+```
+
+**Leaderboard Commands**
+```
+/leaderboard                    # All time AP (default)
+/leaderboard weekly             # Weekly AP
+/leaderboard hacks              # Top hackers (weekly)
+/leaderboard xm                 # Top XM collectors
+/leaderboard weekly hacks       # Weekly hackers
+/leaderboard all links          # All time link creators
+/leaderboard monthly portals 20 # Top 20 monthly portal capturers
+```
+
+**Personal Ranking Commands**
+```
+/myrank                         # Your all time AP rank
+/myrank weekly                  # Your weekly AP rank
+/myrank hacks                   # Your hack rank
+/myrank xm weekly               # Your weekly XM rank
+```
+
+**Submit Flow Example**
+```
+User: /submit
+
+Bot: [Sends detailed instructions with format examples]
+
+User: [Replies with Ingress Prime data]
+
+Bot: ✅ Stats recorded successfully!
+    👤 Agent: YourName
+    ⚡ Lifetime AP: 55,000,000
+    🏆 Cycle Points: 970
+```
+
+**Supported Leaderboard Metrics**
+- `ap` - Action Points (default)
+- `hacks` - Portal hacks performed
+- `xm` - XM collected
+- `portals` - Portals captured
+- `links` - Links created
+- `fields` - Fields created
+- `distance` - Distance walked
+- `destroyed` - Resonators destroyed
+- `neutralized` - Portals neutralized
+- `resonators` - Resonators deployed
+- `mods` - Mods deployed
+
+**Supported Time Periods**
+- `all` - All time statistics (default for AP)
+- `weekly` - This week (default for other metrics)
+- `monthly` - This month
+- `daily` - Today
 
 ## Leaderboard Capabilities
 
