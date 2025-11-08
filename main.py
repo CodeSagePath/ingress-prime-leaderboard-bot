@@ -188,6 +188,7 @@ if __name__ == "__main__":
     def start_dashboard_process():
         """Dashboard process function"""
         try:
+            from bot.config import load_settings
             settings = load_settings()
             if not settings.dashboard_enabled:
                 print("❌ Dashboard is disabled in configuration")
