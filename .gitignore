@@ -9,6 +9,8 @@ __pycache__/
 # Miscellaneous
 ## logs/
 *.log
+.claude
+.marscode
 
 # Database files
 *.sqlite3
