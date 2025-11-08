@@ -2158,6 +2158,7 @@ def configure_handlers(application: Application) -> None:
     application.add_handler(CommandHandler("lastweek", last_week_command))
     application.add_handler(CommandHandler("myrank", myrank_command))
     application.add_handler(CommandHandler("betatokens", betatokens_command))
+    application.add_handler(CommandHandler("beta", betatokens_command))
     application.add_handler(CommandHandler("privacy", set_group_privacy))
     application.add_handler(CommandHandler("backup", manual_backup_command))
     application.add_handler(CommandHandler("stats", stats_command))
