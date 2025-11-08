@@ -41,7 +41,7 @@ async def main():
     print(f"  Admin Token: {'✅ Set' if settings.dashboard_admin_token else '❌ Not set'}")
 
     # Initialize database
-    engine = build_engine(settings.database.url)
+    engine = build_engine(settings)
     session_factory = build_session_factory(engine)
     await init_models(engine)
 
