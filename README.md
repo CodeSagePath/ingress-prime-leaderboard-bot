@@ -1,6 +1,6 @@
 # Ingress Prime Leaderboard Bot
 
-A comprehensive Telegram bot for Ingress Prime players that tracks AP (Access Points), multiple metrics, and provides competitive leaderboards with flexible submission formats.
+A comprehensive Telegram bot for Ingress Prime players that tracks AP (Access Points), multiple metrics, provides competitive leaderboards with flexible submission formats, and includes integrated dashboard for web-based monitoring.
 
 ## Table of Contents
 - [Project Description](#project-description)
@@ -22,6 +22,7 @@ The Ingress Prime Leaderboard Bot is a feature-rich Telegram bot designed to hel
 Key features:
 - **Direct Ingress Prime Export Support** - Paste data exactly as exported from the app
 - **Comprehensive Leaderboards** - Multiple metrics and time periods
+- **Integrated Web Dashboard** - Real-time monitoring and statistics via web interface
 - **Flexible Column Mapping** - Works with 59, 67, 70+ column configurations
 - **User-Friendly Submission** - Reply-based submission flow with examples
 - **Multiple Metrics** - AP, hacks, XM collected, portals captured, links created, and more
@@ -29,6 +30,10 @@ Key features:
 - **Smart Group Integration** - Reply detection and mention handling
 - **Automatic Data Validation** - Format checking and duplicate prevention
 - **Background Job Processing** - Redis Queue for efficient task management
+- **Bot Message Auto-Deletion** - Configurable cleanup of bot responses to reduce spam
+- **Unified Process Management** - Single file deployment with bot + dashboard
+- **Beta Tokens Tracking** - Monitor agent beta progress and requirements
+- **User Settings** - Personalizable display preferences and formats
 
 The bot is built with Python 3.11+, uses SQLAlchemy with aiosqlite for database operations, Redis for background job processing, and the python-telegram-bot library for Telegram integration.
 
@@ -101,7 +106,17 @@ The bot is built with Python 3.11+, uses SQLAlchemy with aiosqlite for database 
 
 6. **Run the bot**
    ```bash
+   # Start bot with auto-deletion features (default)
    python main.py
+
+   # Start bot with dashboard (if DASHBOARD_ENABLED=true)
+   python main.py
+
+   # Start bot only (no dashboard)
+   python main.py --no-dashboard
+
+   # Start only dashboard (if you want separate dashboard)
+   python main.py --dashboard
    ```
 
 ### Docker Setup
@@ -160,6 +175,12 @@ The bot uses the following environment variables for configuration:
 | `GROUP_MESSAGE_RETENTION_MINUTES` | Minutes to keep group messages before cleanup | `60` | `120` |
 | `ADMIN_USER_IDS` | Comma-separated list of admin user IDs | `""` (empty) | `123456789,987654321` |
 | `TEXT_ONLY_MODE` | Disable emojis and markdown for better performance on old devices | `false` | `true` |
+| `DASHBOARD_ENABLED` | Enable/disable web dashboard interface | `false` | `true` |
+| `DASHBOARD_HOST` | Dashboard server host | `0.0.0.0` | `127.0.0.1` |
+| `DASHBOARD_PORT` | Dashboard server port | `8000` | `8085` |
+| `DASHBOARD_ADMIN_TOKEN` | Admin token for dashboard access | `""` (empty) | `your-secure-random-token` |
+| `BOT_MESSAGE_CLEANUP_MINUTES` | Minutes before auto-deleting bot messages | `5` | `10` |
+| `TIMEZONE` | Timezone for scheduling and timestamps | `UTC` | `Asia/Kolkata` |
 
 ### Backup Configuration Variables
 
@@ -204,9 +225,27 @@ The bot supports the following commands:
 
 **/betatokens** - Check your Beta tokens status and requirements
 
+**/beta** - Shortcut for `/betatokens` (same functionality)
+
 ### **Group Commands**
 
 **/privacy** - Configure group privacy settings (public/soft/strict) - Group admins only
+
+### **New Features**
+
+**Bot Message Auto-Deletion**
+- **Configurable Cleanup Time**: Set custom delay before auto-deleting bot messages (default: 5 minutes)
+- **Spam Reduction**: Automatically removes bot responses to keep chats clean
+- **Configurable**: Disable auto-deletion or set custom timing via `BOT_MESSAGE_CLEANUP_MINUTES`
+- **Works Everywhere**: Applies to all bot messages in private and group chats
+- **Example Usage**: Bot responses disappear after 5 minutes, reducing chat clutter
+
+**Integrated Web Dashboard**
+- **Real-Time Monitoring**: Live statistics and user activity tracking
+- **Admin Panel**: Secure admin access with authentication tokens
+- **Multi-Process Architecture**: Bot and dashboard run simultaneously in separate processes
+- **Easy Deployment**: Single command starts both services
+- **Flexible Configuration**: Enable/disable dashboard as needed
 
 ### **Admin Commands**
 
