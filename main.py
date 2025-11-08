@@ -170,11 +170,12 @@ async def main():
 
 if __name__ == "__main__":
     import argparse
+    import multiprocessing
 
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='Ingress Prime Leaderboard Bot')
-    parser.add_argument('--dashboard', action='store_true',
-                       help='Start dashboard server instead of bot')
+    parser.add_argument('--no-dashboard', action='store_true',
+                       help='Start bot only (no dashboard)')
     args = parser.parse_args()
 
     # Configure logging
@@ -184,41 +185,82 @@ if __name__ == "__main__":
         datefmt='%Y-%m-%d %H:%M:%S'
     )
 
-    if args.dashboard:
-        # Start only dashboard server
-        print("🌐 Starting Ingress Leaderboard Dashboard...")
+    def start_dashboard_process():
+        """Dashboard process function"""
         try:
             settings = load_settings()
             if not settings.dashboard_enabled:
                 print("❌ Dashboard is disabled in configuration")
-                print("💡 Set DASHBOARD_ENABLED=true in your .env file")
-                sys.exit(1)
+                return
 
-            # Load dashboard and run it
+            print("🌐 Starting Dashboard Server...")
             import asyncio
-            async def start_dashboard_only():
+
+            async def run_dashboard():
                 dashboard_app, _ = await start_dashboard_server(settings)
                 if dashboard_app:
                     run_dashboard_server_sync(dashboard_app, settings)
                 else:
                     print("❌ Failed to initialize dashboard")
-                    sys.exit(1)
 
-            asyncio.run(start_dashboard_only())
-
-        except KeyboardInterrupt:
-            print("\n👋 Dashboard stopped!")
-            sys.exit(0)
+            asyncio.run(run_dashboard())
         except Exception as e:
-            print(f"\n💥 Dashboard error: {e}")
-            sys.exit(1)
-    else:
-        # Start bot only (no dashboard background task)
+            print(f"❌ Dashboard error: {e}")
+
+    def start_bot_process():
+        """Bot process function"""
         try:
+            print("🤖 Starting Telegram Bot...")
             asyncio.run(main())
-        except KeyboardInterrupt:
-            print("\n👋 Goodbye!")
-            sys.exit(0)
         except Exception as e:
-            print(f"\n💥 Unexpected error: {e}")
-            sys.exit(1)
+            print(f"❌ Bot error: {e}")
+
+    # Start processes
+    processes = []
+
+    if not args.no_dashboard:
+        settings = load_settings()
+        if settings.dashboard_enabled:
+            # Start dashboard in background process
+            dashboard_proc = multiprocessing.Process(target=start_dashboard_process)
+            dashboard_proc.start()
+            processes.append(dashboard_proc)
+            print(f"📊 Dashboard process started (PID: {dashboard_proc.pid})")
+
+    # Start bot process (always runs)
+    bot_proc = multiprocessing.Process(target=start_bot_process)
+    bot_proc.start()
+    processes.append(bot_proc)
+    print(f"🤖 Bot process started (PID: {bot_proc.pid})")
+
+    print(f"🚀 Ingress Prime Leaderboard is running!")
+    print(f"   • Bot: Active")
+    if not args.no_dashboard:
+        settings = load_settings()
+        if settings.dashboard_enabled:
+            print(f"   • Dashboard: http://localhost:{settings.dashboard_port}")
+        else:
+            print(f"   • Dashboard: Disabled (set DASHBOARD_ENABLED=true)")
+    print(f"   • Press Ctrl+C to stop both services")
+
+    try:
+        # Wait for processes to complete
+        for proc in processes:
+            proc.join()
+    except KeyboardInterrupt:
+        print("\n🛑 Shutting down...")
+        for proc in processes:
+            if proc.is_alive():
+                proc.terminate()
+                proc.join(timeout=5)
+                if proc.is_alive():
+                    proc.kill()
+        print("✅ All services stopped!")
+        sys.exit(0)
+    except Exception as e:
+        print(f"\n💥 Error: {e}")
+        for proc in processes:
+            if proc.is_alive():
+                proc.terminate()
+                proc.join()
+        sys.exit(1)
