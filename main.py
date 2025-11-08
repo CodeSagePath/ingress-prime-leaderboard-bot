@@ -23,49 +23,43 @@ load_dotenv(project_root / ".env")
 logger = logging.getLogger(__name__)
 
 
-async def start_dashboard_server(settings, session_factory):
-    """Start the dashboard server in a background task"""
+async def start_dashboard_server(settings):
+    """Initialize dashboard server configuration without starting it"""
     if not settings.dashboard_enabled:
         logger.info("📊 Dashboard is disabled in configuration")
         return None, None
 
     try:
-        # Initialize database for dashboard
-        from bot.database import build_engine, init_models
+        # Create dashboard app configuration (but don't start server yet)
+        from bot.dashboard import create_dashboard_app
+        from bot.database import build_engine, build_session_factory, init_models
+
         engine = build_engine(settings)
         await init_models(engine)
-
-        # Create dashboard app
-        from bot.dashboard import create_dashboard_app
+        session_factory = build_session_factory(engine)
         dashboard_app = create_dashboard_app(settings, session_factory)
-
-        # Configure uvicorn
-        config = uvicorn.Config(
-            dashboard_app,
-            host=settings.dashboard_host,
-            port=settings.dashboard_port,
-            log_level="warning",  # Reduce log noise
-            loop="asyncio",
-        )
-
-        server = uvicorn.Server(config)
 
         logger.info(f"🌐 Dashboard configured on http://{settings.dashboard_host}:{settings.dashboard_port}")
         if settings.dashboard_admin_token:
             logger.info(f"🔐 Admin panel: http://{settings.dashboard_host}:{settings.dashboard_port}/admin?token={settings.dashboard_admin_token}")
 
-        return server, engine
+        return dashboard_app, engine
 
     except Exception as e:
         logger.error(f"❌ Failed to initialize dashboard: {e}")
         return None, None
 
 
-async def run_dashboard_server(server):
-    """Run the dashboard server"""
+def run_dashboard_server_sync(dashboard_app, settings):
+    """Run dashboard server in a separate process (blocking)"""
+    import uvicorn
     try:
-        logger.info("🚀 Starting dashboard server...")
-        await server.serve()
+        uvicorn.run(
+            dashboard_app,
+            host=settings.dashboard_host,
+            port=settings.dashboard_port,
+            log_level="warning"
+        )
     except Exception as e:
         logger.error(f"❌ Dashboard server error: {e}")
 
@@ -112,11 +106,9 @@ async def main():
         dashboard_task = None
 
         if settings.dashboard_enabled:
-            dashboard_server, dashboard_engine = await start_dashboard_server(settings, session_factory)
-            if dashboard_server:
-                # Run dashboard in background task
-                dashboard_task = asyncio.create_task(run_dashboard_server(dashboard_server))
-                print(f"📊 Dashboard enabled on port {settings.dashboard_port}")
+            dashboard_app, dashboard_engine = await start_dashboard_server(settings)
+            if dashboard_app:
+                print(f"📊 Dashboard configured on port {settings.dashboard_port} (use --dashboard to start)")
 
         # Start the bot
         async with application:
@@ -177,6 +169,14 @@ async def main():
 
 
 if __name__ == "__main__":
+    import argparse
+
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Ingress Prime Leaderboard Bot')
+    parser.add_argument('--dashboard', action='store_true',
+                       help='Start dashboard server instead of bot')
+    args = parser.parse_args()
+
     # Configure logging
     logging.basicConfig(
         level=logging.WARNING,  # Reduce log noise for unified operation
@@ -184,11 +184,41 @@ if __name__ == "__main__":
         datefmt='%Y-%m-%d %H:%M:%S'
     )
 
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("\n👋 Goodbye!")
-        sys.exit(0)
-    except Exception as e:
-        print(f"\n💥 Unexpected error: {e}")
-        sys.exit(1)
+    if args.dashboard:
+        # Start only dashboard server
+        print("🌐 Starting Ingress Leaderboard Dashboard...")
+        try:
+            settings = load_settings()
+            if not settings.dashboard_enabled:
+                print("❌ Dashboard is disabled in configuration")
+                print("💡 Set DASHBOARD_ENABLED=true in your .env file")
+                sys.exit(1)
+
+            # Load dashboard and run it
+            import asyncio
+            async def start_dashboard_only():
+                dashboard_app, _ = await start_dashboard_server(settings)
+                if dashboard_app:
+                    run_dashboard_server_sync(dashboard_app, settings)
+                else:
+                    print("❌ Failed to initialize dashboard")
+                    sys.exit(1)
+
+            asyncio.run(start_dashboard_only())
+
+        except KeyboardInterrupt:
+            print("\n👋 Dashboard stopped!")
+            sys.exit(0)
+        except Exception as e:
+            print(f"\n💥 Dashboard error: {e}")
+            sys.exit(1)
+    else:
+        # Start bot only (no dashboard background task)
+        try:
+            asyncio.run(main())
+        except KeyboardInterrupt:
+            print("\n👋 Goodbye!")
+            sys.exit(0)
+        except Exception as e:
+            print(f"\n💥 Unexpected error: {e}")
+            sys.exit(1)
