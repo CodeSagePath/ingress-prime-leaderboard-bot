@@ -1549,7 +1549,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             )
             
             for i, (codename, faction, count) in enumerate(active_users, start=1):
-                stats_text += f"{escape_markdown_v2(str(i) + '.')}. {escape_markdown_v2(codename)} \\[{escape_markdown_v2(faction)}\\] — `{escape_markdown_v2(str(count))}` submissions\\n"
+                stats_text += f"{escape_markdown_v2(str(i) + '.')}. {escape_markdown_v2(codename)} \\[{escape_markdown_v2(faction)}\\] \\— `{escape_markdown_v2(str(count))}` submissions\\n"
         
         await update.message.reply_text(stats_text, parse_mode="MarkdownV2" if not settings.text_only_mode else None)
 
@@ -2302,7 +2302,7 @@ async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             lines = [f"🏆 *{title}* 🏆"]
             for index, (codename, faction, metric_value, metrics_dict) in enumerate(rows, start=1):
                 metric_display = f"{metric_value:,}" if isinstance(metric_value, int) else str(metric_value)
-                lines.append(f"{index}. {escape_markdown_v2(codename)} \\[{faction}\\] — {metric_display}")
+                lines.append(f"{index}. {escape_markdown_v2(codename)} \\[{faction}\\] \\— {metric_display}")
             leaderboard_text = "\n".join(lines)
 
         await update.message.reply_text(
