@@ -152,21 +152,8 @@ def save_to_db(parsed_data: dict) -> bool:
         except (TypeError, ValueError):
             cycle_points = None
     with sqlite3.connect(AGENTS_DB_PATH) as connection:
-        cursor = connection.execute(
-            """
-            SELECT 1
-            FROM agents
-            WHERE agent_name = ? AND date = ? AND time = ?
-            LIMIT 1
-            """,
-            (
-                parsed_data.get("agent_name"),
-                parsed_data.get("date"),
-                parsed_data.get("time"),
-            ),
-        )
-        if cursor.fetchone():
-            return False
+        # Remove duplicate check - allow agents to submit updated stats anytime
+        # Players should be able to update their data multiple times
         connection.execute(
             """
             INSERT INTO agents (
@@ -221,7 +208,7 @@ async def save_submission_to_main_db(session, entry: dict, message) -> None:
         session.add(agent)
         await session.flush()
 
-    # Create submission record
+    # Create submission record (allow multiple submissions for updates)
     try:
         ap = int(str(entry.get('ap', entry.get('lifetime_ap', 0))).replace(',', ''))
     except (ValueError, TypeError):
@@ -1171,7 +1158,7 @@ async def handle_ingress_message(update: Update, context: ContextTypes.DEFAULT_T
     for entry in entries:
         if isinstance(entry, dict):
             if not save_to_db(entry):
-                await message.reply_text("⚠️ Duplicate entry - this data has already been recorded")
+                await message.reply_text("❌ Failed to save submission. Please try again.")
                 return
 
             # Also save to main database using SQLAlchemy models
