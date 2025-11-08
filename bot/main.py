@@ -2299,7 +2299,7 @@ async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 lines.append(f"{index}. {codename} [{faction}] - {metric_display}")
             leaderboard_text = "\n".join(lines)
         else:
-            lines = [f"🏆 *{title}* 🏆"]
+            lines = [f"🏆 *{escape_markdown_v2(title)}* 🏆"]
             for index, (codename, faction, metric_value, metrics_dict) in enumerate(rows, start=1):
                 metric_display = f"{metric_value:,}" if isinstance(metric_value, int) else str(metric_value)
                 lines.append(f"{index}. {escape_markdown_v2(codename)} \\[{faction}\\] \\— {metric_display}")
