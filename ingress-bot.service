@@ -1,0 +1,23 @@
+[Unit]
+Description=Ingress Prime Leaderboard Bot
+After=network.target valkey.service
+Wants=valkey.service
+
+[Service]
+Type=forking
+User=codesagepath
+WorkingDirectory=/home/codesagepath/Documents/TGBot/ingress_leaderboard
+ExecStart=/home/codesagepath/Documents/TGBot/ingress_leaderboard/run_bot.sh start
+ExecStop=/home/codesagepath/Documents/TGBot/ingress_leaderboard/run_bot.sh stop
+ExecReload=/home/codesagepath/Documents/TGBot/ingress_leaderboard/run_bot.sh restart
+PIDFile=/home/codesagepath/Documents/TGBot/ingress_leaderboard/bot.pid
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Environment variables
+Environment=PYTHONPATH=/home/codesagepath/Documents/TGBot/ingress_leaderboard
+
+[Install]
+WantedBy=multi-user.target

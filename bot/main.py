@@ -494,7 +494,6 @@ SPACE_SEPARATED_IGNORED_COLUMNS: set[str] = {
     "+Delta Tokens",
     "+Delta Reso Points",
     "+Delta Field Points",
-    "+Beta Tokens",
 }
 
 SPACE_SEPARATED_HEADER_LINE = " ".join(SPACE_SEPARATED_COLUMNS)
@@ -874,8 +873,9 @@ def _process_field_value(key: str, value: str) -> Any:
 def _normalize_row(row_map: dict[str, str], headers: list[str], cycle_index: int, cycle_header: str) -> dict[str, Any] | None:
     normalized: dict[str, Any] = {"original_header": cycle_header, "cycle_name": cycle_header}
     cycle_value = _convert_cycle_points(row_map.get(cycle_header, ""))
+    # Handle missing cycle points gracefully - set to 0 instead of rejecting the entire entry
     if cycle_value is None:
-        return None
+        cycle_value = 0
     normalized["cycle_points"] = cycle_value
     for index, header in enumerate(headers):
         if index == cycle_index:
@@ -903,7 +903,7 @@ def parse_ingress_message(text: str) -> dict[str, Any] | list[dict[str, Any]] | 
                 headers_tuple = _create_flexible_header_map(header_line)
             except ValueError:
                 return None
-        headers = [column for column in headers_tuple if column not in SPACE_SEPARATED_IGNORED_COLUMNS]
+    headers = [column for column in headers_tuple if column not in SPACE_SEPARATED_IGNORED_COLUMNS]
     cycle_indices = [index for index, header in enumerate(headers) if header.startswith("+")]
     if not cycle_indices:
         return None
