@@ -10,19 +10,11 @@ module.exports = {
         BOT_MESSAGE_CLEANUP_MINUTES: "5"
         // TELEGRAM_TOKEN: "xxx"   // prefer loading from environment or .env file
       },
-      instances: 1, // force 1 instance to prevent conflicts
+      instances: 1, // force 1 instance for unified operation
       autorestart: true,
       watch: false,
-      max_memory_restart: "500M",
-      error_file: "./logs/ingress-bot-error.log",
-      out_file: "./logs/ingress-bot-out.log",
-      log_file: "./logs/ingress-bot-combined.log",
-      time: true,
-      // Add environment variables for bot message auto-deletion
-      env_production: {
-        PYTHONUNBUFFERED: "1",
-        BOT_MESSAGE_CLEANUP_MINUTES: "5"
-      }
+      kill_timeout: 5000, // Allow graceful shutdown
+      restart_delay: 5000
     },
     {
       name: "sage-bot",
