@@ -243,17 +243,36 @@ if __name__ == "__main__":
             print(f"   • Dashboard: Disabled (set DASHBOARD_ENABLED=true)")
     print(f"   • Press Ctrl+C to stop both services")
 
-    try:
-        # Wait for processes to complete
-        for proc in processes:
-            proc.join()
-    except KeyboardInterrupt:
-        print("\n🛑 Shutting down...")
+    # Setup signal handlers for graceful shutdown
+    import signal
+
+    def signal_handler(signum, frame):
+        print(f"\n🛑 Received signal {signum}, shutting down...")
         for proc in processes:
             if proc.is_alive():
                 proc.terminate()
                 proc.join(timeout=5)
                 if proc.is_alive():
+                    print(f"Force killing process {proc.pid}")
+                    proc.kill()
+        print("✅ All services stopped!")
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+
+    try:
+        # Wait for processes to complete
+        for proc in processes:
+            proc.join()
+    except KeyboardInterrupt:
+        print("\n🛑 Keyboard interrupt, shutting down...")
+        for proc in processes:
+            if proc.is_alive():
+                proc.terminate()
+                proc.join(timeout=5)
+                if proc.is_alive():
+                    print(f"Force killing process {proc.pid}")
                     proc.kill()
         print("✅ All services stopped!")
         sys.exit(0)
@@ -262,5 +281,7 @@ if __name__ == "__main__":
         for proc in processes:
             if proc.is_alive():
                 proc.terminate()
-                proc.join()
+                proc.join(timeout=5)
+                if proc.is_alive():
+                    proc.kill()
         sys.exit(1)
