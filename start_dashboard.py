@@ -13,9 +13,15 @@ from pathlib import Path
 project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
+# Load environment variables from .env file
+from dotenv import load_dotenv
+load_dotenv(project_root / ".env")
+
 async def main():
     """Start the dashboard server"""
     print("🚀 Starting Ingress Leaderboard Dashboard...")
+    print(f"📁 Project root: {project_root}")
+    print(f"🔧 DASHBOARD_ENABLED env: {os.environ.get('DASHBOARD_ENABLED', 'Not set')}")
 
     # Load settings and database
     from bot.config import load_settings
