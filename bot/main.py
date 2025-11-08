@@ -194,6 +194,52 @@ def save_to_db(parsed_data: dict) -> bool:
     return True
 
 
+async def save_submission_to_main_db(session, entry: dict, message) -> None:
+    """Save submission data to the main SQLAlchemy database."""
+    from datetime import datetime
+
+    # Get or create agent
+    telegram_id = message.from_user.id if message.from_user else None
+    agent_name = entry.get('agent_name')
+    faction = entry.get('agent_faction', '').upper()
+
+    # Check if agent already exists
+    from sqlalchemy import select
+    result = await session.execute(
+        select(Agent).where(Agent.telegram_id == telegram_id)
+    )
+    agent = result.scalar_one_or_none()
+
+    if not agent:
+        # Create new agent
+        agent = Agent(
+            telegram_id=telegram_id,
+            codename=agent_name,
+            faction=faction,
+            created_at=datetime.now(timezone.utc)
+        )
+        session.add(agent)
+        await session.flush()
+
+    # Create submission record
+    try:
+        ap = int(str(entry.get('ap', entry.get('lifetime_ap', 0))).replace(',', ''))
+    except (ValueError, TypeError):
+        ap = 0
+
+    submission = Submission(
+        agent_id=agent.id,
+        chat_id=message.chat_id if message.chat_id else None,
+        time_span=entry.get('time_span', 'ALL TIME'),
+        ap=ap,
+        metrics=entry,  # Store all metrics as JSON
+        submitted_at=datetime.now(timezone.utc)
+    )
+
+    session.add(submission)
+    logger.info(f"Saved submission for agent {agent_name} ({faction}) with AP {ap}")
+
+
 async def _get_latest_cycle_name_async() -> str | None:
     def _query() -> str | None:
         with sqlite3.connect(AGENTS_DB_PATH) as connection:
@@ -1127,6 +1173,16 @@ async def handle_ingress_message(update: Update, context: ContextTypes.DEFAULT_T
             if not save_to_db(entry):
                 await message.reply_text("⚠️ Duplicate entry - this data has already been recorded")
                 return
+
+            # Also save to main database using SQLAlchemy models
+            try:
+                session_factory = context.application.bot_data["session_factory"]
+                async with session_scope(session_factory) as session:
+                    await save_submission_to_main_db(session, entry, message)
+            except Exception as e:
+                logger.error(f"Failed to save submission to main database: {e}")
+                # Continue even if main DB save fails
+
             saved = True
             successful_entries.append(entry)
 
