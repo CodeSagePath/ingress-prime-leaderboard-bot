@@ -1,6 +1,7 @@
 #!/bin/bash
-# Ingress Leaderboard Bot Startup Script
-# This script ensures only one bot instance is running
+# Ingress Prime Leaderboard Bot Startup Script
+# This script manages the unified bot with integrated dashboard
+# Ensures only one bot instance is running with proper process management
 
 BOT_DIR="/home/codesagepath/Documents/TGBot/ingress_leaderboard"
 VENV_PATH="$BOT_DIR/venv"
@@ -71,9 +72,9 @@ start_bot() {
     # Make sure services are running
     systemctl start valkey 2>/dev/null || true
 
-    # Activate virtual environment and start bot
+    # Activate virtual environment and start unified bot
     source "$VENV_PATH/bin/activate"
-    nohup python -m bot.main > bot.log 2>&1 &
+    nohup python main.py > bot.log 2>&1 &
     PID=$!
 
     # Wait a moment to see if it starts successfully
@@ -120,20 +121,25 @@ case "$1" in
         ;;
     logs)
         if [ -f "bot.log" ]; then
-            tail -n 20 bot.log
+            if [ "$2" = "-f" ]; then
+                tail -f bot.log
+            else
+                tail -n 20 bot.log
+            fi
         else
             echo "No log file found."
         fi
         ;;
     *)
-        echo "Usage: $0 {start|stop|restart|status|logs}"
+        echo "Usage: $0 {start|stop|restart|status|logs [-f]}"
         echo ""
         echo "Commands:"
-        echo "  start   - Start the bot"
-        echo "  stop    - Stop the bot"
-        echo "  restart - Restart the bot"
-        echo "  status  - Check if bot is running"
-        echo "  logs    - Show last 20 lines of bot log"
+        echo "  start         - Start the unified bot (Telegram + Dashboard)"
+        echo "  stop          - Stop the bot"
+        echo "  restart       - Restart the bot"
+        echo "  status        - Check if bot is running"
+        echo "  logs          - Show last 20 lines of bot log"
+        echo "  logs -f       - Follow log output in real-time"
         exit 1
         ;;
 esac
