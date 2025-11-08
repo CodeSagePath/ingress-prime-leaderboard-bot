@@ -1149,6 +1149,14 @@ async def handle_ingress_message(update: Update, context: ContextTypes.DEFAULT_T
             await message.reply_text(error_msg, parse_mode="Markdown")
         else:
             await message.reply_text("❌ Please use /submit first, then paste your Ingress Prime data as a reply.")
+
+        # Auto-delete user's invalid submission message after error response
+        try:
+            await message.delete()
+            logger.info(f"Auto-deleted invalid submission message from user {message.from_user.id}")
+        except Exception as e:
+            logger.warning(f"Failed to auto-delete invalid submission message: {e}")
+
         return
 
     entries = [parsed] if isinstance(parsed, dict) else parsed
@@ -1159,6 +1167,14 @@ async def handle_ingress_message(update: Update, context: ContextTypes.DEFAULT_T
         if isinstance(entry, dict):
             if not save_to_db(entry):
                 await message.reply_text("❌ Failed to save submission. Please try again.")
+
+                # Auto-delete user's submission message after error response
+                try:
+                    await message.delete()
+                    logger.info(f"Auto-deleted failed submission message from user {message.from_user.id}")
+                except Exception as e:
+                    logger.warning(f"Failed to auto-delete submission message: {e}")
+
                 return
 
             # Also save to main database using SQLAlchemy models
@@ -1175,6 +1191,14 @@ async def handle_ingress_message(update: Update, context: ContextTypes.DEFAULT_T
 
     if not saved:
         await message.reply_text("❌ No valid data found. Please check your format.")
+
+        # Auto-delete user's invalid submission message after error response
+        try:
+            await message.delete()
+            logger.info(f"Auto-deleted invalid submission message from user {message.from_user.id}")
+        except Exception as e:
+            logger.warning(f"Failed to auto-delete invalid submission message: {e}")
+
         return
 
     # Success message with details
@@ -1193,7 +1217,16 @@ async def handle_ingress_message(update: Update, context: ContextTypes.DEFAULT_T
     else:
         success_msg = f"✅ *{len(successful_entries)} entries recorded successfully!*"
 
+    # Send success message
     await message.reply_text(success_msg, parse_mode="Markdown")
+
+    # Auto-delete user's data submission message after processing
+    try:
+        await message.delete()
+        logger.info(f"Auto-deleted submission message from user {message.from_user.id}")
+    except Exception as e:
+        logger.warning(f"Failed to auto-delete submission message: {e}")
+        # Continue even if deletion fails (might not have permissions)
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
