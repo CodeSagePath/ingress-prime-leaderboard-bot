@@ -1093,6 +1093,98 @@ def parse_tab_space_data(data: str) -> tuple[int, dict[str, Any], str]:
     return ap, metrics, time_span
 
 
+async def handle_column_counting(message, text: str) -> None:
+    """Handle column counting for Ingress Prime data."""
+    try:
+        # Parse the text to get column information
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        if len(lines) < 2:
+            await message.reply_text("❌ Invalid data format. Please include both header and data lines.")
+            return
+
+        header_line = lines[0]
+
+        # Determine if using tabs or spaces
+        use_tabs = "\t" in header_line
+
+        if use_tabs:
+            # Tab-separated format
+            headers = [part.strip() for part in header_line.split("\t")]
+        else:
+            # Space-separated format - use the same logic as parse_ingress_message
+            try:
+                headers_tuple = SPACE_SEPARATED_HEADER_MAP.get(header_line)
+                if not headers_tuple:
+                    headers_tuple = _create_flexible_header_map(header_line)
+                headers = [column for column in headers_tuple if column not in SPACE_SEPARATED_IGNORED_COLUMNS]
+            except ValueError:
+                await message.reply_text("❌ Unable to parse column headers. Please check your data format.")
+                return
+
+        # Count total columns
+        total_columns = len(headers)
+
+        # Analyze data lines to see how many columns are actually present
+        data_lines_count = 0
+        data_columns_found = []
+
+        for data_line in lines[1:]:
+            if not data_line:
+                continue
+
+            data_lines_count += 1
+
+            if use_tabs:
+                values = [part.strip() for part in data_line.split("\t")]
+                data_columns = len(values)
+            else:
+                # For space-separated, count the actual values in the data line
+                values = data_line.split()
+                data_columns = len(values)
+
+            data_columns_found.append(data_columns)
+
+        # Create response message
+        response_lines = [
+            "🔍 **COLUMN ANALYSIS RESULTS** 🔍",
+            "",
+            f"📊 **Total Columns Found:** {total_columns}",
+            f"📝 **Data Lines Analyzed:** {data_lines_count}",
+        ]
+
+        if data_columns_found:
+            unique_counts = list(set(data_columns_found))
+            if len(unique_counts) == 1:
+                response_lines.append(f"📋 **Columns per Data Line:** {unique_counts[0]} (consistent)")
+            else:
+                response_lines.append(f"📋 **Columns per Data Line:** {', '.join(map(str, unique_counts))} (varies)")
+
+        response_lines.extend([
+            "",
+            "📑 **Column Headers:**",
+        ])
+
+        # List all column headers
+        for i, header in enumerate(headers, 1):
+            response_lines.append(f"  {i}. {header}")
+
+        # Add some insights
+        response_lines.extend([
+            "",
+            "💡 **Insights:**",
+            f"• {'✅' if len(set(data_columns_found)) <= 1 else '⚠️'} Column consistency: {'Good' if len(set(data_columns_found)) <= 1 else 'Varies between lines'}",
+            f"• {'✅' if total_columns >= 10 else 'ℹ️'} Data richness: {'Rich dataset' if total_columns >= 10 else 'Basic dataset'}",
+            f"• 🎯 This data supports {total_columns} different metrics/statistics",
+        ])
+
+        response_text = "\n".join(response_lines)
+        await message.reply_text(response_text, parse_mode="Markdown")
+
+    except Exception as e:
+        logger.error(f"Error in column counting: {e}")
+        await message.reply_text("❌ An error occurred while analyzing your data. Please check the format and try again.")
+
+
 async def handle_ingress_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = update.message
     if not message:
@@ -1103,16 +1195,19 @@ async def handle_ingress_message(update: Update, context: ContextTypes.DEFAULT_T
 
     # Check if this is a reply to a submit instruction (improved user experience)
     is_reply_to_submit = False
+    is_reply_to_countcolumns = False
     if message.reply_to_message and message.reply_to_message.text:
         reply_text = message.reply_to_message.text.lower()
         if "stats submission" in reply_text or "ingress prime export data" in reply_text:
             is_reply_to_submit = True
+        elif "column counter" in reply_text:
+            is_reply_to_countcolumns = True
 
     chat = getattr(update, "effective_chat", None)
     chat_type = getattr(chat, "type", None)
 
-    # For groups, require bot mention unless it's a reply to submit instructions
-    if chat_type in {"group", "supergroup"} and not is_reply_to_submit:
+    # For groups, require bot mention unless it's a reply to submit instructions or countcolumns
+    if chat_type in {"group", "supergroup"} and not (is_reply_to_submit or is_reply_to_countcolumns):
         bot_username = context.bot_data.get("bot_username")
         if not bot_username:
             me = await context.bot.get_me()
@@ -1130,8 +1225,13 @@ async def handle_ingress_message(update: Update, context: ContextTypes.DEFAULT_T
         ("lifetime ap" in text.lower() or "all time" in text.lower())
     )
 
-    if not is_ingress_data and not is_reply_to_submit:
+    if not is_ingress_data and not (is_reply_to_submit or is_reply_to_countcolumns):
         # Only provide helpful error if it's clearly not ingress data
+        return
+
+    # Handle column counting mode
+    if is_reply_to_countcolumns:
+        await handle_column_counting(message, text)
         return
 
     parsed = parse_ingress_message(text)
@@ -2151,6 +2251,7 @@ def configure_handlers(application: Application) -> None:
     application.add_handler(broadcast_handler)
     
     application.add_handler(CommandHandler("submit", submit))
+    application.add_handler(CommandHandler("countcolumns", count_columns))
     application.add_handler(CommandHandler("leaderboard", leaderboard))
     application.add_handler(CommandHandler("top10", top10_command))
     application.add_handler(CommandHandler("top", top_command))
@@ -2201,6 +2302,42 @@ async def submit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
 
     await update.message.reply_text(submit_text, parse_mode="Markdown" if not settings.text_only_mode else None)
+
+
+async def count_columns(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /countcolumns command - temporary command to count data columns."""
+    if not update.message:
+        return
+
+    settings: Settings = context.application.bot_data["settings"]
+
+    # Send instructions for column counting
+    if settings.text_only_mode:
+        count_text = (
+            "🔍 *COLUMN COUNTER*\n\n"
+            "Paste your Ingress Prime export data to count the number of columns/fields.\n\n"
+            "📋 *FORMAT EXAMPLE:*\n"
+            "Copy your data from Ingress Prime app and paste it exactly as shown:\n\n"
+            "Time Span Agent Name Agent Faction Date (yyyy-mm-dd) Time (hh:mm:ss) Level Lifetime AP Current AP ...\n"
+            "ALL TIME YourName Enlightened 2025-11-07 04:40:52 13 55000000 15000000 ...\n\n"
+            "✅ *Simply reply to this message with your data*\n"
+            "💡 *This will only count columns, not submit any data*"
+        )
+    else:
+        count_text = (
+            "🔍 **COLUMN COUNTER** 🔍\n\n"
+            "Paste your Ingress Prime export data to count the number of columns/fields.\n\n"
+            "📋 **FORMAT EXAMPLE:**\n"
+            "Copy your data from Ingress Prime app and paste it exactly as shown:\n\n"
+            "```\n"
+            "Time Span Agent Name Agent Faction Date (yyyy-mm-dd) Time (hh:mm:ss) Level Lifetime AP Current AP ...\n"
+            "ALL TIME YourName Enlightened 2025-11-07 04:40:52 13 55000000 15000000 ...\n"
+            "```\n\n"
+            "✅ **Simply reply to this message with your data**\n"
+            "💡 **This will only count columns, not submit any data**"
+        )
+
+    await update.message.reply_text(count_text, parse_mode="Markdown" if not settings.text_only_mode else None)
 
 async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /leaderboard command with support for multiple metrics."""
