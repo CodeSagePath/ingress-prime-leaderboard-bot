@@ -1144,38 +1144,25 @@ async def handle_column_counting(message, text: str) -> None:
 
             data_columns_found.append(data_columns)
 
-        # Create response message
+        # Create concise response message
         response_lines = [
-            "🔍 **COLUMN ANALYSIS RESULTS** 🔍",
-            "",
-            f"📊 **Total Columns Found:** {total_columns}",
-            f"📝 **Data Lines Analyzed:** {data_lines_count}",
+            f"📊 **Total columns found:** {total_columns}",
+            f"📝 **Data lines analyzed:** {data_lines_count}",
         ]
 
         if data_columns_found:
             unique_counts = list(set(data_columns_found))
             if len(unique_counts) == 1:
-                response_lines.append(f"📋 **Columns per Data Line:** {unique_counts[0]} (consistent)")
+                response_lines.append(f"📋 **Columns per data line:** {unique_counts[0]} (consistent)")
             else:
-                response_lines.append(f"📋 **Columns per Data Line:** {', '.join(map(str, unique_counts))} (varies)")
+                response_lines.append(f"📋 **Columns per data line:** {', '.join(map(str, unique_counts))} (varies)")
 
-        response_lines.extend([
-            "",
-            "📑 **Column Headers:**",
-        ])
-
-        # List all column headers
-        for i, header in enumerate(headers, 1):
+        # Add key column headers (show first 5, then "..." if more)
+        response_lines.append("📑 **Key column headers:**")
+        for i, header in enumerate(headers[:5], 1):
             response_lines.append(f"  {i}. {header}")
-
-        # Add some insights
-        response_lines.extend([
-            "",
-            "💡 **Insights:**",
-            f"• {'✅' if len(set(data_columns_found)) <= 1 else '⚠️'} Column consistency: {'Good' if len(set(data_columns_found)) <= 1 else 'Varies between lines'}",
-            f"• {'✅' if total_columns >= 10 else 'ℹ️'} Data richness: {'Rich dataset' if total_columns >= 10 else 'Basic dataset'}",
-            f"• 🎯 This data supports {total_columns} different metrics/statistics",
-        ])
+        if len(headers) > 5:
+            response_lines.append(f"  ... and {len(headers) - 5} more columns")
 
         response_text = "\n".join(response_lines)
         await message.reply_text(response_text, parse_mode="Markdown")
@@ -1200,7 +1187,7 @@ async def handle_ingress_message(update: Update, context: ContextTypes.DEFAULT_T
         reply_text = message.reply_to_message.text.lower()
         if "stats submission" in reply_text or "ingress prime export data" in reply_text:
             is_reply_to_submit = True
-        elif "column counter" in reply_text:
+        elif "column counter" in reply_text or "count the number of columns" in reply_text or "column_analysis_mode" in reply_text:
             is_reply_to_countcolumns = True
 
     chat = getattr(update, "effective_chat", None)
@@ -2321,7 +2308,7 @@ async def count_columns(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             "Time Span Agent Name Agent Faction Date (yyyy-mm-dd) Time (hh:mm:ss) Level Lifetime AP Current AP ...\n"
             "ALL TIME YourName Enlightened 2025-11-07 04:40:52 13 55000000 15000000 ...\n\n"
             "✅ *Simply reply to this message with your data*\n"
-            "💡 *This will only count columns, not submit any data*"
+            "💡 *This will only count columns, not submit any data*\n\n🔍COLUMN_ANALYSIS_MODE🔍"
         )
     else:
         count_text = (
@@ -2334,7 +2321,7 @@ async def count_columns(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             "ALL TIME YourName Enlightened 2025-11-07 04:40:52 13 55000000 15000000 ...\n"
             "```\n\n"
             "✅ **Simply reply to this message with your data**\n"
-            "💡 **This will only count columns, not submit any data**"
+            "💡 **This will only count columns, not submit any data**\n\n🔍COLUMN_ANALYSIS_MODE🔍"
         )
 
     await update.message.reply_text(count_text, parse_mode="Markdown" if not settings.text_only_mode else None)
