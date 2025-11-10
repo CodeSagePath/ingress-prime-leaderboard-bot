@@ -36,6 +36,7 @@ from .jobs.backup import perform_backup, manual_backup_command
 from .models import Agent, GroupMessage, GroupPrivacyMode, GroupSetting, PendingAction, Submission, WeeklyStat, UserSetting
 from .services.leaderboard import get_leaderboard
 from .utils.beta_tokens import get_token_status_message, update_medal_requirements, update_task_name, get_medal_config
+from .utils.data_mapping import get_mapping_manager
 
 logger = logging.getLogger(__name__)
 
@@ -1404,6 +1405,11 @@ async def handle_ingress_message(update: Update, context: ContextTypes.DEFAULT_T
         elif "data preview" in reply_text or "data_preview_mode" in reply_text:
             is_reply_to_preview = True
 
+    # Check if this is a mapping setup reply
+    if "pending_mapping_id" in context.user_data:
+        await handle_mapping_setup_reply(message, context)
+        return
+
     chat = getattr(update, "effective_chat", None)
     chat_type = getattr(chat, "type", None)
 
@@ -1913,20 +1919,21 @@ async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     session_factory = context.application.bot_data["session_factory"]
     async with session_scope(session_factory) as session:
         user_setting = await _get_or_create_user_setting(session, update.effective_user.id)
+        settings = await get_settings(session)
         
         # Format current settings for display
         date_format_preview = datetime.now().strftime(user_setting.date_format)
         
         settings_text = (
-            f"⚙️ *Your Current Settings*\\n\\n"
-            f"1\\. Date Format: `{escape_markdown_v2(user_setting.date_format)}` \\(Example: {escape_markdown_v2(date_format_preview)}\\)\\n"
-            f"2\\. Number Format: `{escape_markdown_v2(user_setting.number_format)}` \\(Example: 1,000\\)\\n"
-            f"3\\. Leaderboard Size: `{escape_markdown_v2(str(user_setting.leaderboard_size))}` \\(entries\\)\\n"
-            f"4\\. Show Emojis: `{escape_markdown_v2('Yes' if user_setting.show_emojis else 'No')}`\\n\\n"
+            f"⚙️ *Your Current Settings*\n\n"
+            f"1\\. Date Format: `{escape_markdown_v2(user_setting.date_format)}` \\(Example: {escape_markdown_v2(date_format_preview)}\\)\n"
+            f"2\\. Number Format: `{escape_markdown_v2(user_setting.number_format)}` \\(Example: 1,000\\)\n"
+            f"3\\. Leaderboard Size: `{escape_markdown_v2(str(user_setting.leaderboard_size))}` \\(entries\\)\n"
+            f"4\\. Show Emojis: `{escape_markdown_v2('Yes' if user_setting.show_emojis else 'No')}`\n\n"
             f"Select a setting to change or type /cancel to exit\\."
         )
         
-        await update.message.reply_text(settings_text, parse_mode="MarkdownV2")
+        await update.message.reply_text(settings_text, parse_mode="MarkdownV2" if not settings.text_only_mode else None)
         return SETTINGS_MENU
 
 
@@ -2490,7 +2497,9 @@ def configure_handlers(application: Application) -> None:
     
     application.add_handler(CommandHandler("submit", submit))
     application.add_handler(CommandHandler("previewdata", preview_data))
+    application.add_handler(CommandHandler("preview", preview_data))
     application.add_handler(CommandHandler("countcolumns", count_columns))
+    application.add_handler(CommandHandler("count", count_columns))
     application.add_handler(CommandHandler("leaderboard", leaderboard))
     # Add specialized leaderboard commands as shortcuts
     application.add_handler(CommandHandler("leaderboard_hacks", leaderboard_hacks))
@@ -2505,8 +2514,11 @@ def configure_handlers(application: Application) -> None:
     application.add_handler(CommandHandler("lastcycle", last_cycle_command))
     application.add_handler(CommandHandler("lastweek", last_week_command))
     application.add_handler(CommandHandler("myrank", myrank_command))
+    application.add_handler(CommandHandler("setmapping", set_mapping_command))
+    application.add_handler(CommandHandler("listmappings", list_mappings_command))
+    application.add_handler(CommandHandler("testmapping", test_mapping_command))
     application.add_handler(CommandHandler("betatokens", betatokens_command))
-    application.add_handler(CommandHandler("beta", betatokens_command))
+    application.add_handler(CommandHandler("beta", beta_command))
     application.add_handler(CommandHandler("privacy", set_group_privacy))
     application.add_handler(CommandHandler("backup", manual_backup_command))
     application.add_handler(CommandHandler("stats", stats_command))
@@ -2659,8 +2671,6 @@ async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     try:
         # Use the comprehensive leaderboard service
-        from .services.leaderboard import get_leaderboard
-
         chat_id = update.effective_chat.id if update.effective_chat else None
 
         async with session_scope(session_factory) as session:
@@ -2696,8 +2706,10 @@ async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         )
 
     except Exception as e:
+        import traceback
         logger.error(f"Error fetching leaderboard: {e}")
-        await update.message.reply_text("❌ Error fetching leaderboard data. Please try again later.")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        await update.message.reply_text(f"❌ Error fetching leaderboard data: {str(e)[:100]}")
 
 async def top10_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /top10 command."""
@@ -2745,6 +2757,276 @@ async def myrank_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         else:
             await update.message.reply_text("You haven't submitted any stats yet. Use /submit to get started.")
 
+async def handle_mapping_setup_reply(message, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle replies during mapping setup process."""
+    mapping_id = context.user_data["pending_mapping_id"]
+    settings: Settings = context.application.bot_data["settings"]
+    mapping_manager = get_mapping_manager()
+
+    # Check what step we're in
+    if "mapping_keys_received" not in context.user_data:
+        # First step: receiving keys
+        keys_string = message.text.strip()
+
+        if not keys_string or ',' not in keys_string:
+            await message.reply_text(
+                "❌ **Invalid format**\n\n"
+                "Please provide comma-separated keys:\n\n"
+                "Example: `Time Span, Agent Name, Agent Faction, Date, Time`",
+                parse_mode="Markdown" if not settings.text_only_mode else None
+            )
+            return
+
+        # Store keys and ask for values
+        context.user_data["mapping_keys"] = keys_string
+        context.user_data["mapping_keys_received"] = True
+
+        await message.reply_text(
+            f"✅ **Keys received for '{mapping_id}'**\n\n"
+            f"Keys: `{keys_string}`\n\n"
+            "Now please reply with your **values** (comma-separated):\n\n"
+            "Example: `ALL TIME, PlayerName, Enlightened, 2025-11-10, 04:30:00`\n\n"
+            "⏳ Waiting for values...",
+            parse_mode="Markdown" if not settings.text_only_mode else None
+        )
+
+    else:
+        # Second step: receiving values
+        values_string = message.text.strip()
+        keys_string = context.user_data["mapping_keys"]
+
+        if not values_string or ',' not in values_string:
+            await message.reply_text(
+                "❌ **Invalid format**\n\n"
+                "Please provide comma-separated values:\n\n"
+                "Example: `ALL TIME, PlayerName, Enlightened, 2025-11-10, 04:30:00`",
+                parse_mode="Markdown" if not settings.text_only_mode else None
+            )
+            return
+
+        # Create the mapping
+        success = mapping_manager.create_mapping(
+            mapping_id=mapping_id,
+            keys_string=keys_string,
+            values_string=values_string,
+            description=f"Custom mapping created by user {message.from_user.id}",
+            created_by=message.from_user.id
+        )
+
+        # Clean up user context
+        del context.user_data["pending_mapping_id"]
+        del context.user_data["mapping_keys"]
+        del context.user_data["mapping_keys_received"]
+
+        if success:
+            await message.reply_text(
+                f"✅ **Mapping '{mapping_id}' created successfully!**\n\n"
+                f"**Keys:** `{keys_string}`\n"
+                f"**Values:** `{values_string}`\n\n"
+                f"💡 You can now test it with `/testmapping {mapping_id} <data>`\n"
+                f"💡 View all mappings with `/listmappings`",
+                parse_mode="Markdown" if not settings.text_only_mode else None
+            )
+        else:
+            await message.reply_text(
+                "❌ **Failed to create mapping**\n\n"
+                "Please check that your keys and values have the same number of items.",
+                parse_mode="Markdown" if not settings.text_only_mode else None
+            )
+
+
+async def set_mapping_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /setmapping command - create a new key-value mapping."""
+    if not update.message or not update.effective_user:
+        return
+
+    settings: Settings = context.application.bot_data["settings"]
+
+    if not context.args or len(context.args) < 1:
+        await update.message.reply_text(
+            "📋 **Set Data Mapping**\n\n"
+            "Usage: `/setmapping <mapping_id>`\n"
+            "Then provide keys and values in the following format:\n\n"
+            "**Keys:** `key1, key2, key3, ...`\n"
+            "**Values:** `value1, value2, value3, ...`\n\n"
+            "Example:\n"
+            "`/setmapping my_format`\n"
+            "Keys: `Time Span, Agent Name, Agent Faction, Date, Time`\n"
+            "Values: `ALL TIME, PlayerName, Enlightened, 2025-11-10, 04:30:00`\n\n"
+            "💡 This creates a reusable mapping for processing your data format.",
+            parse_mode="Markdown" if not settings.text_only_mode else None
+        )
+        return
+
+    mapping_id = context.args[0].strip()
+    mapping_manager = get_mapping_manager()
+
+    # Store mapping ID in user context for the next step
+    context.user_data["pending_mapping_id"] = mapping_id
+
+    await update.message.reply_text(
+        f"📋 **Creating Mapping: {mapping_id}**\n\n"
+        "Now please reply with your **keys** (comma-separated):\n\n"
+        "Example: `Time Span, Agent Name, Agent Faction, Date, Time`\n\n"
+        "⏳ Waiting for keys...",
+        parse_mode="Markdown" if not settings.text_only_mode else None
+    )
+
+
+async def list_mappings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /listmappings command - show all available mappings."""
+    if not update.message:
+        return
+
+    settings: Settings = context.application.bot_data["settings"]
+    mapping_manager = get_mapping_manager()
+
+    mappings = mapping_manager.list_mappings()
+
+    if not mappings:
+        await update.message.reply_text(
+            "📋 **No mappings available**\n\n"
+            "Use `/setmapping <id>` to create your first mapping.",
+            parse_mode="Markdown" if not settings.text_only_mode else None
+        )
+        return
+
+    response_lines = ["📋 **Available Data Mappings:**\n"]
+
+    for mapping_id, mapping in mappings.items():
+        response_lines.extend([
+            f"**• {mapping_id}**: {mapping.description}",
+            f"  Keys: `{', '.join(mapping.keys[:5])}{'...' if len(mapping.keys) > 5 else ''}`",
+            f"  Fields: {len(mapping.keys)} | Active: {'✅' if mapping.is_active else '❌'}",
+            ""
+        ])
+
+    response_lines.extend([
+        "💡 **Use /setmapping <id> to create a new mapping**",
+        "💡 **Use /testmapping <id> <data> to test with sample data**"
+    ])
+
+    await update.message.reply_text(
+        "\n".join(response_lines),
+        parse_mode="Markdown" if not settings.text_only_mode else None
+    )
+
+
+async def test_mapping_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /testmapping command - test a mapping with sample data."""
+    if not update.message or not update.effective_user:
+        return
+
+    settings: Settings = context.application.bot_data["settings"]
+
+    if not context.args or len(context.args) < 2:
+        await update.message.reply_text(
+            "🧪 **Test Data Mapping**\n\n"
+            "Usage: `/testmapping <mapping_id> <data_line>`\n\n"
+            "Example:\n"
+            "`/testmapping my_format ALL TIME PlayerName Enlightened 2025-11-10 04:30:00`\n\n"
+            "💡 This shows how your data will be processed using the specified mapping.",
+            parse_mode="Markdown" if not settings.text_only_mode else None
+        )
+        return
+
+    mapping_id = context.args[0].strip()
+    data_line = " ".join(context.args[1:])
+
+    mapping_manager = get_mapping_manager()
+    mapping = mapping_manager.get_mapping(mapping_id)
+
+    if not mapping:
+        await update.message.reply_text(
+            f"❌ **Mapping '{mapping_id}' not found**\n\n"
+            f"Use `/listmappings` to see available mappings.",
+            parse_mode="Markdown" if not settings.text_only_mode else None
+        )
+        return
+
+    # Process the data
+    processed_data = mapping_manager.process_data_with_mapping(mapping_id, data_line)
+    leaderboard_data = mapping_manager.extract_leaderboard_relevant_data(processed_data)
+
+    # Format response
+    response_lines = [
+        f"🧪 **Test Results for '{mapping_id}'**\n",
+        f"**Input Data:** `{data_line}`",
+        "",
+        "**📊 All Extracted Fields:**"
+    ]
+
+    for key, value in processed_data.items():
+        response_lines.append(f"  • {key}: `{value}`")
+
+    response_lines.extend([
+        "",
+        "**🏆 Leaderboard-Relevant Data:**"
+    ])
+
+    for key, value in leaderboard_data.items():
+        response_lines.append(f"  • {key}: `{value}`")
+
+    await update.message.reply_text(
+        "\n".join(response_lines),
+        parse_mode="Markdown" if not settings.text_only_mode else None
+    )
+
+
+async def beta_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /beta command - show general beta program information."""
+    if not update.message:
+        return
+
+    settings: Settings = context.application.bot_data["settings"]
+
+    # Send general beta program information
+    if settings.text_only_mode:
+        beta_info = (
+            "🧪 *BETA PROGRAM INFORMATION*\n\n"
+            "Welcome to the Ingress Leaderboard Beta Program!\n\n"
+            "*What is Beta?*\n"
+            "• Early access to new leaderboard features\n"
+            "• Testing experimental metrics and commands\n"
+            "• Help shape the future of the leaderboard system\n\n"
+            "*Beta Features:*\n"
+            "• Advanced metric tracking (Hacks, XM, Distance, etc.)\n"
+            "• Specialized leaderboard commands\n"
+            "• Beta tokens system for achievements\n\n"
+            "*How to Participate:*\n"
+            "1. Submit your stats regularly with /submit\n"
+            "2. Try new beta features and provide feedback\n"
+            "3. Check your beta tokens with /betatokens\n"
+            "4. Report bugs and suggest improvements\n\n"
+            "*Current Beta Version:* v2.0\n"
+            "*Active Testers:* Check with /betatokens\n\n"
+            "🔬 *Thank you for helping improve the leaderboard!*"
+        )
+    else:
+        beta_info = (
+            "🧪 **BETA PROGRAM INFORMATION** 🧪\n\n"
+            "Welcome to the Ingress Leaderboard Beta Program!\n\n"
+            "**What is Beta?**\n"
+            "• Early access to new leaderboard features\n"
+            "• Testing experimental metrics and commands\n"
+            "• Help shape the future of the leaderboard system\n\n"
+            "**Beta Features:**\n"
+            "• Advanced metric tracking (Hacks, XM, Distance, etc.)\n"
+            "• Specialized leaderboard commands\n"
+            "• Beta tokens system for achievements\n\n"
+            "**How to Participate:**\n"
+            "1. Submit your stats regularly with /submit\n"
+            "2. Try new beta features and provide feedback\n"
+            "3. Check your beta tokens with /betatokens\n"
+            "4. Report bugs and suggest improvements\n\n"
+            "**Current Beta Version:** v2.0\n"
+            "**Active Testers:** Check with /betatokens\n\n"
+            "🔬 *Thank you for helping improve the leaderboard!*"
+        )
+
+    await update.message.reply_text(beta_info, parse_mode="Markdown" if not settings.text_only_mode else None)
+
+
 async def betatokens_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /betatokens command - basic implementation."""
     if not update.message or not update.effective_user:
@@ -2760,7 +3042,7 @@ async def betatokens_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         agent = result.scalar_one_or_none()
 
         if not agent:
-            await update.message.reply_text("You haven't submitted any stats yet. Use /submit to get started.")
+            await update.message.reply_text("❌ No stats found. Please submit your Ingress data with /submit first to check beta tokens.")
             return
 
         # Get beta tokens status

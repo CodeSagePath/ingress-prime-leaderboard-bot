@@ -47,9 +47,9 @@ class Submission(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     agent_id: Mapped[int] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True)
-    chat_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
+    chat_id = mapped_column(BigInteger, nullable=True, index=True)
     ap: Mapped[int] = mapped_column(Integer, nullable=False)
-    metrics: Mapped[dict] = mapped_column(JSON, nullable=False)
+    metrics = mapped_column(JSON, nullable=False)
     time_span: Mapped[str] = mapped_column(String(32), nullable=False, default="ALL TIME")
     submitted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
@@ -121,7 +121,7 @@ class PendingAction(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     action: Mapped[str] = mapped_column(String, nullable=False)
     chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
-    message_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    message_id = mapped_column(Integer, nullable=True)
     executed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
     
@@ -138,9 +138,9 @@ class Verification(Base):
     submission_id: Mapped[int] = mapped_column(ForeignKey("submissions.id", ondelete="CASCADE"), nullable=False, index=True)
     screenshot_path: Mapped[str] = mapped_column(String(255), nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default=VerificationStatus.pending.value)
-    admin_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
-    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    admin_id = mapped_column(BigInteger, nullable=True, index=True)
+    verified_at = mapped_column(DateTime(timezone=True), nullable=True)
+    rejection_reason = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     submission: Mapped["Submission"] = relationship(back_populates="verification")
