@@ -1093,6 +1093,69 @@ def parse_tab_space_data(data: str) -> tuple[int, dict[str, Any], str]:
     return ap, metrics, time_span
 
 
+async def leaderboard_hacks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /leaderboard_hacks command - shortcut for /leaderboard hacks."""
+    # Simulate /leaderboard hacks command
+    if context.args is None:
+        context.args = []
+    context.args = list(context.args) + ["hacks"]
+    await leaderboard(update, context)
+
+
+async def leaderboard_xm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /leaderboard_xm command - shortcut for /leaderboard xm."""
+    # Simulate /leaderboard xm command
+    if context.args is None:
+        context.args = []
+    context.args = list(context.args) + ["xm"]
+    await leaderboard(update, context)
+
+
+async def leaderboard_distance(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /leaderboard_distance command - shortcut for /leaderboard distance."""
+    # Simulate /leaderboard distance command
+    if context.args is None:
+        context.args = []
+    context.args = list(context.args) + ["distance"]
+    await leaderboard(update, context)
+
+
+async def leaderboard_links(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /leaderboard_links command - shortcut for /leaderboard links."""
+    # Simulate /leaderboard links command
+    if context.args is None:
+        context.args = []
+    context.args = list(context.args) + ["links"]
+    await leaderboard(update, context)
+
+
+async def leaderboard_fields(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /leaderboard_fields command - shortcut for /leaderboard fields."""
+    # Simulate /leaderboard fields command
+    if context.args is None:
+        context.args = []
+    context.args = list(context.args) + ["fields"]
+    await leaderboard(update, context)
+
+
+async def leaderboard_portals(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /leaderboard_portals command - shortcut for /leaderboard portals."""
+    # Simulate /leaderboard portals command
+    if context.args is None:
+        context.args = []
+    context.args = list(context.args) + ["portals"]
+    await leaderboard(update, context)
+
+
+async def leaderboard_resonators(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /leaderboard_resonators command - shortcut for /leaderboard resonators."""
+    # Simulate /leaderboard resonators command
+    if context.args is None:
+        context.args = []
+    context.args = list(context.args) + ["resonators"]
+    await leaderboard(update, context)
+
+
 async def handle_column_counting(message, text: str) -> None:
     """Handle column counting for Ingress Prime data."""
     try:
@@ -1118,8 +1181,28 @@ async def handle_column_counting(message, text: str) -> None:
                     headers_tuple = _create_flexible_header_map(header_line)
                 headers = [column for column in headers_tuple if column not in SPACE_SEPARATED_IGNORED_COLUMNS]
             except ValueError:
-                await message.reply_text("❌ Unable to parse column headers. Please check your data format.")
-                return
+                # Fallback: count columns from data line instead of trying to parse headers
+                logger.info("Header parsing failed, using fallback column counting")
+                data_line = lines[1] if len(lines) > 1 else ""
+                if data_line.strip():
+                    data_values = data_line.split()
+                    total_columns = len(data_values)
+                    response_lines = [
+                        f"📊 **Total columns found:** {total_columns}",
+                        f"📝 **Data lines analyzed:** 1",
+                        f"📋 **Columns per data line:** {total_columns}",
+                        "",
+                        "📑 **Column Analysis:**",
+                        f"  Found {total_columns} data values in your submission",
+                        "",
+                        "⚠️ *Note: Detailed column headers couldn't be parsed, but column count is accurate*"
+                    ]
+                    response_text = "\n".join(response_lines)
+                    await message.reply_text(response_text, parse_mode="Markdown")
+                    return
+                else:
+                    await message.reply_text("❌ Unable to parse column headers. Please check your data format.")
+                    return
 
         # Count total columns
         total_columns = len(headers)
@@ -1169,7 +1252,69 @@ async def handle_column_counting(message, text: str) -> None:
 
     except Exception as e:
         logger.error(f"Error in column counting: {e}")
+        logger.error(f"Input text was: {text[:200]}...")
         await message.reply_text("❌ An error occurred while analyzing your data. Please check the format and try again.")
+
+
+async def validate_user_submission(entry: dict, message, context) -> bool:
+    """Validate that user can only submit data for themselves."""
+    if not message.from_user:
+        logger.warning("Submission without user information detected")
+        return False
+
+    telegram_id = message.from_user.id
+    agent_name_in_data = entry.get('agent_name', '').strip()
+
+    if not agent_name_in_data:
+        logger.warning(f"Submission from user {telegram_id} missing agent name")
+        return False
+
+    # For new users, allow first submission to establish identity
+    session_factory = context.application.bot_data.get("session_factory")
+    if not session_factory:
+        logger.error("No session factory available for validation")
+        return False
+
+    try:
+        with session_factory() as session:
+            from .models import Agent
+            from sqlalchemy import select
+
+            # Check if this telegram_id already exists in the database
+            stmt = select(Agent).where(Agent.telegram_id == telegram_id)
+            existing_agent = session.execute(stmt).scalar_one_or_none()
+
+            if existing_agent:
+                # User exists - check if they're submitting for their own codename
+                if existing_agent.codename.lower() != agent_name_in_data.lower():
+                    logger.warning(
+                        f"User {telegram_id} ({existing_agent.codename}) attempted to submit data for {agent_name_in_data}"
+                    )
+                    # Send security alert
+                    await message.reply_text(
+                        "🚨 *SECURITY ALERT*\n\n"
+                        f"You can only submit statistics for your own agent: **{existing_agent.codename}**\n\n"
+                        f"You attempted to submit data for: **{agent_name_in_data}**\n\n"
+                        "This incident has been logged. Please submit your own data only.",
+                        parse_mode="Markdown"
+                    )
+                    return False
+                # User is submitting for themselves - allowed
+                logger.info(f"User {telegram_id} ({existing_agent.codename}) submitting data for themselves")
+                return True
+            else:
+                # New user - allow them to establish their identity
+                logger.info(f"New user {telegram_id} establishing identity as {agent_name_in_data}")
+                return True
+
+    except Exception as e:
+        logger.error(f"Error during user validation: {e}")
+        # If validation fails, err on the side of caution and reject
+        await message.reply_text(
+            "❌ Validation error. Please try again or contact support.",
+            parse_mode="Markdown"
+        )
+        return False
 
 
 async def handle_ingress_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1218,8 +1363,14 @@ async def handle_ingress_message(update: Update, context: ContextTypes.DEFAULT_T
 
     # Handle column counting mode
     if is_reply_to_countcolumns:
-        await handle_column_counting(message, text)
-        return
+        logger.info(f"Processing column counting request from user {message.from_user.id}")
+        try:
+            await handle_column_counting(message, text)
+            return
+        except Exception as e:
+            logger.error(f"Error in handle_column_counting: {e}")
+            await message.reply_text("❌ An error occurred while counting columns. Please try again.")
+            return
 
     parsed = parse_ingress_message(text)
     if not parsed:
@@ -1252,6 +1403,12 @@ async def handle_ingress_message(update: Update, context: ContextTypes.DEFAULT_T
 
     for entry in entries:
         if isinstance(entry, dict):
+            # Validate that user can only submit data for themselves
+            if not await validate_user_submission(entry, message, context):
+                logger.info(f"Submission validation failed for user {message.from_user.id}")
+                return
+
+            logger.info(f"Submission validation passed for user {message.from_user.id}")
             if not save_to_db(entry):
                 await message.reply_text("❌ Failed to save submission. Please try again.")
 
@@ -1342,6 +1499,14 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             "• /leaderboard links - Top link creators\n"
             "• /leaderboard fields - Top field creators\n"
             "• /leaderboard distance - Top distance walkers\n\n"
+            "🔥 *SHORTCUT COMMANDS:*\n"
+            "• /leaderboard_hacks - Same as /leaderboard hacks\n"
+            "• /leaderboard_xm - Same as /leaderboard xm\n"
+            "• /leaderboard_distance - Same as /leaderboard distance\n"
+            "• /leaderboard_links - Same as /leaderboard links\n"
+            "• /leaderboard_fields - Same as /leaderboard fields\n"
+            "• /leaderboard_portals - Same as /leaderboard portals\n"
+            "• /leaderboard_resonators - Same as /leaderboard resonators\n\n"
             "🎯 *OTHER USEFUL:*\n"
             "• /top ENL or /top RES - Faction tops\n"
             "• /top10 - Global top 10\n"
@@ -1373,6 +1538,14 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             "• /leaderboard links - Top link creators\n"
             "• /leaderboard fields - Top field creators\n"
             "• /leaderboard distance - Top distance walkers\n\n"
+            "🔥 *SHORTCUT COMMANDS:*\n"
+            "• /leaderboard_hacks - Same as /leaderboard hacks\n"
+            "• /leaderboard_xm - Same as /leaderboard xm\n"
+            "• /leaderboard_distance - Same as /leaderboard distance\n"
+            "• /leaderboard_links - Same as /leaderboard links\n"
+            "• /leaderboard_fields - Same as /leaderboard fields\n"
+            "• /leaderboard_portals - Same as /leaderboard portals\n"
+            "• /leaderboard_resonators - Same as /leaderboard resonators\n\n"
             "🎯 **OTHER USEFUL:**\n"
             "• /top ENL or /top RES - Faction tops\n"
             "• /top10 - Global top 10\n"
@@ -2240,6 +2413,14 @@ def configure_handlers(application: Application) -> None:
     application.add_handler(CommandHandler("submit", submit))
     application.add_handler(CommandHandler("countcolumns", count_columns))
     application.add_handler(CommandHandler("leaderboard", leaderboard))
+    # Add specialized leaderboard commands as shortcuts
+    application.add_handler(CommandHandler("leaderboard_hacks", leaderboard_hacks))
+    application.add_handler(CommandHandler("leaderboard_xm", leaderboard_xm))
+    application.add_handler(CommandHandler("leaderboard_distance", leaderboard_distance))
+    application.add_handler(CommandHandler("leaderboard_links", leaderboard_links))
+    application.add_handler(CommandHandler("leaderboard_fields", leaderboard_fields))
+    application.add_handler(CommandHandler("leaderboard_portals", leaderboard_portals))
+    application.add_handler(CommandHandler("leaderboard_resonators", leaderboard_resonators))
     application.add_handler(CommandHandler("top10", top10_command))
     application.add_handler(CommandHandler("top", top_command))
     application.add_handler(CommandHandler("lastcycle", last_cycle_command))
