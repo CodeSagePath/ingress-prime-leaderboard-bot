@@ -1255,13 +1255,13 @@ async def handle_data_preview(message, text: str) -> None:
         # Parse the text to get data
         lines = [line.strip() for line in text.splitlines() if line.strip()]
         if len(lines) < 2:
-            await message.reply_text("❌ Invalid data format. Please include both header and data lines.")
+            await message.reply_text("❌ Invalid data format. Please include both header and data lines.\n\n💡 Use /submit to see the correct format example.")
             return
 
         # Parse the ingress data
         parsed = parse_ingress_message(text)
         if not parsed:
-            await message.reply_text("❌ Unable to parse the data. Please check the format and try again.")
+            await message.reply_text("❌ Unable to parse the data. Please check the format and try again.\n\n💡 Make sure to copy exactly from the Ingress Prime app.")
             return
 
         entries = [parsed] if isinstance(parsed, dict) else parsed
@@ -1347,7 +1347,7 @@ async def handle_column_counting(message, text: str) -> None:
         # Parse the text to get column information
         lines = [line.strip() for line in text.splitlines() if line.strip()]
         if len(lines) < 2:
-            await message.reply_text("❌ Invalid data format. Please include both header and data lines.")
+            await message.reply_text("❌ Invalid data format. Please include both header and data lines.\n\n💡 Use /submit to see the correct format example.")
             return
 
         header_line = lines[0]
@@ -1529,7 +1529,7 @@ async def handle_ingress_message(update: Update, context: ContextTypes.DEFAULT_T
             )
             await message.reply_text(error_msg, parse_mode="Markdown")
         else:
-            await message.reply_text("❌ Please use /submit first, then paste your Ingress Prime data as a reply.")
+            await message.reply_text("❌ Please use /submit first, then paste your Ingress Prime data as a reply.\n\n💡 This helps me understand your data format better.")
 
         # Auto-delete user's invalid submission message after error response
         try:
@@ -1623,8 +1623,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             "🤖 *PrimeStatsBot Help* 🤖\n\n"
             "📊 *MAIN COMMANDS:*\n"
               "• /submit - Submit your Ingress Prime stats\n"
-            "• /previewdata - Preview leaderboard metrics from your data\n"
-            "• /countcolumns - Count columns in your data\n"
+            "• /previewdata or /preview - Preview leaderboard metrics from your data\n"
+            "• /countcolumns or /count - Count columns in your data\n"
             "• /leaderboard - View rankings\n"
             "• /myrank - Check your rank\n"
             ""
@@ -1649,7 +1649,12 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             "🎯 *OTHER USEFUL:*\n"
             "• /top ENL or /top RES - Faction tops\n"
             "• /top10 - Global top 10\n"
-            "• /settings - Configure display\n"
+            "• /lastcycle - Current cycle leaderboard\n"
+            "• /lastweek - Last 7 days leaderboard\n"
+            "• /myrank - Your personal rank\n"
+            "• /settings - Configure display preferences\n"
+            "• /setmapping <id> - Create custom data mapping\n"
+            "• /privacy <mode> - Set group privacy (admins)\n"
             "• /help - Show this help\n\n"
             "📋 *SUBMIT FORMAT:*\n"
             "Copy your data from Ingress Prime app and paste it:\n\n"
@@ -1664,8 +1669,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             "🤖 **PrimeStatsBot Help** 🤖\n\n"
             "📊 **MAIN COMMANDS:**\n"
               "• /submit - Submit your Ingress Prime stats\n"
-            "• /previewdata - Preview leaderboard metrics from your data\n"
-            "• /countcolumns - Count columns in your data\n"
+            "• /previewdata or /preview - Preview leaderboard metrics from your data\n"
+            "• /countcolumns or /count - Count columns in your data\n"
             "• /leaderboard - View rankings\n"
             "• /myrank - Check your rank\n"
             ""
@@ -1690,7 +1695,12 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             "🎯 **OTHER USEFUL:**\n"
             "• /top ENL or /top RES - Faction tops\n"
             "• /top10 - Global top 10\n"
-            "• /settings - Configure display\n"
+            "• /lastcycle - Current cycle leaderboard\n"
+            "• /lastweek - Last 7 days leaderboard\n"
+            "• /myrank - Your personal rank\n"
+            "• /settings - Configure display preferences\n"
+            "• /setmapping <id> - Create custom data mapping\n"
+            "• /privacy <mode> - Set group privacy (admins)\n"
             "• /help - Show this help\n\n"
             "📋 **SUBMIT FORMAT:**\n"
             "Copy your data from Ingress Prime app and paste it:\n\n"
@@ -1707,7 +1717,33 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.message:
         return
-    await update.message.reply_text("Welcome to the Ingress leaderboard bot. Use /submit to submit your stats.")
+    settings: Settings = context.application.bot_data["settings"]
+
+    welcome_text = (
+        "🎮 **Welcome to the PrimeStats Leaderboard Bot!** 🎮\n\n"
+        "Track your Ingress Prime progress and compete with other agents!\n\n"
+        "🚀 **Quick Start:**\n"
+        "• /submit - Submit your stats from the Ingress app\n"
+        "• /leaderboard - View current rankings\n"
+        "• /help - See all available commands\n\n"
+        "💡 **Pro tip:** Copy your data exactly from the Ingress Prime app for best results!"
+    )
+
+    if settings.text_only_mode:
+        welcome_text = (
+            "🎮 *Welcome to the PrimeStats Leaderboard Bot!* 🎮\n\n"
+            "Track your Ingress Prime progress and compete with other agents!\n\n"
+            "🚀 *Quick Start:*\n"
+            "• /submit - Submit your stats from the Ingress app\n"
+            "• /leaderboard - View current rankings\n"
+            "• /help - See all available commands\n\n"
+            "💡 *Pro tip: Copy your data exactly from the Ingress Prime app for best results!*"
+        )
+
+    await update.message.reply_text(
+        welcome_text,
+        parse_mode="MarkdownV2" if not settings.text_only_mode else None
+    )
 
 
 
@@ -1798,7 +1834,7 @@ async def set_group_privacy(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return
     args = getattr(context, "args", [])
     if not args:
-        await update.message.reply_text("Usage: /privacy <public|soft|strict>.")
+        await update.message.reply_text("Usage: /privacy <public|soft|strict>\n\n🔐 Controls how user data is displayed in groups")
         return
     value = args[0].lower()
     try:
@@ -2769,16 +2805,23 @@ async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         import traceback
         logger.error(f"Error fetching leaderboard: {e}")
         logger.error(f"Traceback: {traceback.format_exc()}")
-        await update.message.reply_text(f"❌ Error fetching leaderboard data: {str(e)[:100]}")
+        await update.message.reply_text(f"❌ Error fetching leaderboard data. Please try again later.\n\n🔧 Technical details: {str(e)[:50]}...")
 
 async def top10_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /top10 command."""
-    await leaderboard(update, context)
+    """Handle /top10 command - Show global top 10 agents."""
+    if not update.message:
+        return
+
+    settings: Settings = context.application.bot_data["settings"]
+
+    # Get global top 10 leaderboard (all time, no faction filter)
+    rows = await _fetch_cycle_leaderboard(10)
+    await _send_cycle_leaderboard(update, settings, rows, "🌍 Global Top 10 Agents")
 
 async def top_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /top command - basic implementation."""
     if not update.message or not context.args:
-        await update.message.reply_text("Usage: /top ENL or /top RES")
+        await update.message.reply_text("Usage: /top ENL or /top RES\n\n🏆 Shows top 10 agents for your faction")
         return
 
     faction = context.args[0].upper()
