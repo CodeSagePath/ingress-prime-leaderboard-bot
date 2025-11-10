@@ -1156,6 +1156,133 @@ async def leaderboard_resonators(update: Update, context: ContextTypes.DEFAULT_T
     await leaderboard(update, context)
 
 
+async def preview_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /previewdata command - shows parsed data in table format without saving."""
+    if not update.message:
+        return
+
+    settings: Settings = context.application.bot_data["settings"]
+
+    # Send instructions for data preview
+    if settings.text_only_mode:
+        preview_text = (
+            "📋 *DATA PREVIEW*\n\n"
+            "Paste your Ingress Prime export data to see what gets parsed and stored.\n\n"
+            "📋 *FORMAT EXAMPLE:*\n"
+            "Copy your data from Ingress Prime app and paste it exactly as shown:\n\n"
+            "Time Span Agent Name Agent Faction Date (yyyy-mm-dd) Time (hh:mm:ss) Level Lifetime AP Current AP ...\n"
+            "ALL TIME YourName Enlightened 2025-11-07 04:40:52 13 55000000 15000000 ...\n\n"
+            "✅ *Simply reply to this message with your data*\n"
+            "💡 *This will only show the parsed data, not save it*\n\n📊DATA_PREVIEW_MODE📊"
+        )
+    else:
+        preview_text = (
+            "📋 **DATA PREVIEW**\n\n"
+            "Paste your Ingress Prime export data to see what gets parsed and stored.\n\n"
+            "📋 **FORMAT EXAMPLE:**\n"
+            "```\n"
+            "Time Span Agent Name Agent Faction Date (yyyy-mm-dd) Time (hh:mm:ss) Level Lifetime AP Current AP ...\n"
+            "ALL TIME YourName Enlightened 2025-11-07 04:40:52 13 55000000 15000000 ...\n"
+            "```\n\n"
+            "✅ **Simply reply to this message with your data**\n"
+            "💡 **This will only show the parsed data, not save it**\n\n📊DATA_PREVIEW_MODE📊"
+        )
+
+    await update.message.reply_text(preview_text, parse_mode="Markdown" if not settings.text_only_mode else None)
+
+
+async def handle_data_preview(message, text: str) -> None:
+    """Handle data preview for Ingress Prime data - shows only leaderboard-relevant metrics."""
+    try:
+        # Parse the text to get data
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        if len(lines) < 2:
+            await message.reply_text("❌ Invalid data format. Please include both header and data lines.")
+            return
+
+        # Parse the ingress data
+        parsed = parse_ingress_message(text)
+        if not parsed:
+            await message.reply_text("❌ Unable to parse the data. Please check the format and try again.")
+            return
+
+        entries = [parsed] if isinstance(parsed, dict) else parsed
+        response_lines = ["📊 **LEADERBOARD METRICS PREVIEW**", ""]
+
+        for i, entry in enumerate(entries, 1):
+            if isinstance(entry, dict):
+                response_lines.append(f"**Entry {i}:**")
+
+                # Basic info
+                response_lines.extend([
+                    f"• Agent: {entry.get('agent_name', 'N/A')}",
+                    f"• Faction: {entry.get('agent_faction', 'N/A')}",
+                    f"• Time Span: {entry.get('time_span', 'N/A')}",
+                    f"• Date: {entry.get('date', 'N/A')}",
+                    f"• Time: {entry.get('time', 'N/A')}",
+                    f"• Level: {entry.get('level', 'N/A')}",
+                    "",
+                ])
+
+                # Show only leaderboard-relevant metrics in a clean table format
+                metrics = entry.get('metrics', {})
+
+                # Define leaderboard metrics with their display names
+                leaderboard_metrics = {
+                    'AP': entry.get('ap', 'N/A'),
+                    'Current AP': entry.get('current_ap', 'N/A'),
+                    'Cycle Points': entry.get('cycle_points', 'N/A'),
+                    'Hacks': metrics.get('hacks', 'N/A'),
+                    'XM Collected': metrics.get('xm_collected', 'N/A'),
+                    'Portals Captured': metrics.get('portals_captured', 'N/A'),
+                    'Resonators Deployed': metrics.get('resonators_deployed', 'N/A'),
+                    'Links Created': metrics.get('links_created', 'N/A'),
+                    'Control Fields Created': metrics.get('control_fields_created', 'N/A'),
+                    'Mods Deployed': metrics.get('mods_deployed', 'N/A'),
+                    'Resonators Destroyed': metrics.get('resonators_destroyed', 'N/A'),
+                    'Portals Neutralized': metrics.get('portals_neutralized', 'N/A'),
+                    'Distance Walked': metrics.get('distance_walked', 'N/A'),
+                }
+
+                response_lines.append("**📋 LEADERBOARD METRICS:**")
+
+                # Create a table-like format
+                for metric_name, value in leaderboard_metrics.items():
+                    if value is not None and value != 'N/A':
+                        if isinstance(value, (int, float)):
+                            # Format large numbers with commas
+                            if value > 1000000:
+                                formatted_value = f"{value:,}"
+                            else:
+                                formatted_value = f"{value:,}"
+                        else:
+                            formatted_value = str(value)
+                        response_lines.append(f"  • {metric_name:.<20} {formatted_value}")
+
+                response_lines.extend([
+                    "",
+                    "**🏆 CORRESPONDING COMMANDS:**",
+                    "• /leaderboard - AP ranking",
+                    "• /leaderboard_hacks - Hacks ranking",
+                    "• /leaderboard_xm - XM Collected ranking",
+                    "• /leaderboard_portals - Portals Captured ranking",
+                    "• /leaderboard_resonators - Resonators Deployed ranking",
+                    "• /leaderboard_links - Links Created ranking",
+                    "• /leaderboard_fields - Control Fields Created ranking",
+                    "• /leaderboard_distance - Distance Walked ranking",
+                    "",
+                    "💡 *This was only a preview - no data was saved*",
+                    ""
+                ])
+
+        response_text = "\n".join(response_lines)
+        await message.reply_text(response_text, parse_mode="Markdown")
+
+    except Exception as e:
+        logger.error(f"Error in data preview: {e}")
+        await message.reply_text("❌ An error occurred while previewing your data. Please check the format and try again.")
+
+
 async def handle_column_counting(message, text: str) -> None:
     """Handle column counting for Ingress Prime data."""
     try:
@@ -1256,67 +1383,6 @@ async def handle_column_counting(message, text: str) -> None:
         await message.reply_text("❌ An error occurred while analyzing your data. Please check the format and try again.")
 
 
-async def validate_user_submission(entry: dict, message, context) -> bool:
-    """Validate that user can only submit data for themselves."""
-    if not message.from_user:
-        logger.warning("Submission without user information detected")
-        return False
-
-    telegram_id = message.from_user.id
-    agent_name_in_data = entry.get('agent_name', '').strip()
-
-    if not agent_name_in_data:
-        logger.warning(f"Submission from user {telegram_id} missing agent name")
-        return False
-
-    # For new users, allow first submission to establish identity
-    session_factory = context.application.bot_data.get("session_factory")
-    if not session_factory:
-        logger.error("No session factory available for validation")
-        return False
-
-    try:
-        with session_factory() as session:
-            from .models import Agent
-            from sqlalchemy import select
-
-            # Check if this telegram_id already exists in the database
-            stmt = select(Agent).where(Agent.telegram_id == telegram_id)
-            existing_agent = session.execute(stmt).scalar_one_or_none()
-
-            if existing_agent:
-                # User exists - check if they're submitting for their own codename
-                if existing_agent.codename.lower() != agent_name_in_data.lower():
-                    logger.warning(
-                        f"User {telegram_id} ({existing_agent.codename}) attempted to submit data for {agent_name_in_data}"
-                    )
-                    # Send security alert
-                    await message.reply_text(
-                        "🚨 *SECURITY ALERT*\n\n"
-                        f"You can only submit statistics for your own agent: **{existing_agent.codename}**\n\n"
-                        f"You attempted to submit data for: **{agent_name_in_data}**\n\n"
-                        "This incident has been logged. Please submit your own data only.",
-                        parse_mode="Markdown"
-                    )
-                    return False
-                # User is submitting for themselves - allowed
-                logger.info(f"User {telegram_id} ({existing_agent.codename}) submitting data for themselves")
-                return True
-            else:
-                # New user - allow them to establish their identity
-                logger.info(f"New user {telegram_id} establishing identity as {agent_name_in_data}")
-                return True
-
-    except Exception as e:
-        logger.error(f"Error during user validation: {e}")
-        # If validation fails, err on the side of caution and reject
-        await message.reply_text(
-            "❌ Validation error. Please try again or contact support.",
-            parse_mode="Markdown"
-        )
-        return False
-
-
 async def handle_ingress_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = update.message
     if not message:
@@ -1328,18 +1394,21 @@ async def handle_ingress_message(update: Update, context: ContextTypes.DEFAULT_T
     # Check if this is a reply to a submit instruction (improved user experience)
     is_reply_to_submit = False
     is_reply_to_countcolumns = False
+    is_reply_to_preview = False
     if message.reply_to_message and message.reply_to_message.text:
         reply_text = message.reply_to_message.text.lower()
         if "stats submission" in reply_text or "ingress prime export data" in reply_text:
             is_reply_to_submit = True
         elif "column counter" in reply_text or "count the number of columns" in reply_text or "column_analysis_mode" in reply_text:
             is_reply_to_countcolumns = True
+        elif "data preview" in reply_text or "data_preview_mode" in reply_text:
+            is_reply_to_preview = True
 
     chat = getattr(update, "effective_chat", None)
     chat_type = getattr(chat, "type", None)
 
-    # For groups, require bot mention unless it's a reply to submit instructions or countcolumns
-    if chat_type in {"group", "supergroup"} and not (is_reply_to_submit or is_reply_to_countcolumns):
+    # For groups, require bot mention unless it's a reply to submit instructions, countcolumns, or preview
+    if chat_type in {"group", "supergroup"} and not (is_reply_to_submit or is_reply_to_countcolumns or is_reply_to_preview):
         bot_username = context.bot_data.get("bot_username")
         if not bot_username:
             me = await context.bot.get_me()
@@ -1357,9 +1426,20 @@ async def handle_ingress_message(update: Update, context: ContextTypes.DEFAULT_T
         ("lifetime ap" in text.lower() or "all time" in text.lower())
     )
 
-    if not is_ingress_data and not (is_reply_to_submit or is_reply_to_countcolumns):
+    if not is_ingress_data and not (is_reply_to_submit or is_reply_to_countcolumns or is_reply_to_preview):
         # Only provide helpful error if it's clearly not ingress data
         return
+
+    # Handle data preview mode
+    if is_reply_to_preview:
+        logger.info(f"Processing data preview request from user {message.from_user.id}")
+        try:
+            await handle_data_preview(message, text)
+            return
+        except Exception as e:
+            logger.error(f"Error in handle_data_preview: {e}")
+            await message.reply_text("❌ An error occurred while previewing data. Please try again.")
+            return
 
     # Handle column counting mode
     if is_reply_to_countcolumns:
@@ -1403,12 +1483,6 @@ async def handle_ingress_message(update: Update, context: ContextTypes.DEFAULT_T
 
     for entry in entries:
         if isinstance(entry, dict):
-            # Validate that user can only submit data for themselves
-            if not await validate_user_submission(entry, message, context):
-                logger.info(f"Submission validation failed for user {message.from_user.id}")
-                return
-
-            logger.info(f"Submission validation passed for user {message.from_user.id}")
             if not save_to_db(entry):
                 await message.reply_text("❌ Failed to save submission. Please try again.")
 
@@ -1486,6 +1560,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             "🤖 *PrimeStatsBot Help* 🤖\n\n"
             "📊 *MAIN COMMANDS:*\n"
               "• /submit - Submit your Ingress Prime stats\n"
+            "• /previewdata - Preview leaderboard metrics from your data\n"
+            "• /countcolumns - Count columns in your data\n"
             "• /leaderboard - View rankings\n"
             "• /myrank - Check your rank\n"
             ""
@@ -1525,6 +1601,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             "🤖 **PrimeStatsBot Help** 🤖\n\n"
             "📊 **MAIN COMMANDS:**\n"
               "• /submit - Submit your Ingress Prime stats\n"
+            "• /previewdata - Preview leaderboard metrics from your data\n"
+            "• /countcolumns - Count columns in your data\n"
             "• /leaderboard - View rankings\n"
             "• /myrank - Check your rank\n"
             ""
@@ -2411,6 +2489,7 @@ def configure_handlers(application: Application) -> None:
     application.add_handler(broadcast_handler)
     
     application.add_handler(CommandHandler("submit", submit))
+    application.add_handler(CommandHandler("previewdata", preview_data))
     application.add_handler(CommandHandler("countcolumns", count_columns))
     application.add_handler(CommandHandler("leaderboard", leaderboard))
     # Add specialized leaderboard commands as shortcuts
