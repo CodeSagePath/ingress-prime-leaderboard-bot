@@ -7,8 +7,8 @@ making the bot flexible to handle different Ingress export formats.
 
 import logging
 from typing import Dict, List, Optional, Tuple
-import json
 from dataclasses import dataclass
+from .field_mapper import get_field_mapper
 
 logger = logging.getLogger(__name__)
 
@@ -156,6 +156,79 @@ class DynamicMappingManager:
             logger.error(f"Error processing data with mapping '{mapping_id}': {e}")
             return {}
 
+    def process_key_value_data(self,
+                              header_line: str,
+                              data_line: str) -> Dict[str, str]:
+        """
+        Process data in key-value format using header and data lines.
+
+        Args:
+            header_line: Line containing field names (comma-separated)
+            data_line: Line containing corresponding values (comma-separated)
+
+        Returns:
+            Dictionary mapping field names to their values
+        """
+        try:
+            # Parse headers and values
+            headers = [header.strip() for header in header_line.split(',') if header.strip()]
+            values = [value.strip() for value in data_line.split(',') if value.strip()]
+
+            # Create key-value pairs
+            result = {}
+            for i, header in enumerate(headers):
+                if i < len(values):
+                    result[header] = values[i]
+                else:
+                    result[header] = ""  # Default empty value if missing
+
+            logger.debug(f"Processed key-value data: {len(result)} fields extracted")
+            return result
+
+        except Exception as e:
+            logger.error(f"Error processing key-value data: {e}")
+            return {}
+
+    def create_mapping_from_headers(self,
+                                   mapping_id: str,
+                                   header_line: str,
+                                   description: str = "",
+                                   created_by: Optional[int] = None) -> bool:
+        """
+        Create a mapping from a header line.
+
+        Args:
+            mapping_id: Unique identifier for this mapping
+            header_line: Comma-separated header names
+            description: Optional description of the mapping
+            created_by: Telegram user ID who created this mapping
+
+        Returns:
+            True if mapping was created successfully, False otherwise
+        """
+        try:
+            # Parse headers
+            headers = [header.strip() for header in header_line.split(',') if header.strip()]
+
+            # Create empty values (will be filled when processing data)
+            values = [""] * len(headers)
+
+            # Store the mapping
+            self.mappings[mapping_id] = DataMapping(
+                keys=headers,
+                values=values,
+                description=description,
+                created_by=created_by,
+                is_active=True
+            )
+
+            logger.info(f"Created mapping '{mapping_id}' from {len(headers)} headers")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error creating mapping '{mapping_id}' from headers: {e}")
+            return False
+
     def extract_leaderboard_relevant_data(self,
                                         processed_data: Dict[str, str]) -> Dict[str, any]:
         """
@@ -167,43 +240,21 @@ class DynamicMappingManager:
         Returns:
             Dictionary with only leaderboard-relevant fields
         """
-        # Define leaderboard-relevant field mappings
-        leaderboard_fields = {
-            # Basic info
-            "agent_name": ["agent name", "name", "codename"],
-            "agent_faction": ["agent faction", "faction", "team"],
-            "level": ["level", "player level"],
-            "ap": ["lifetime ap", "ap", "total ap"],
-            "current_ap": ["current ap"],
-            "time_span": ["time span", "period"],
+        # Get the field mapper to determine which fields are supported
+        field_mapper = get_field_mapper()
+        supported_fields = field_mapper.get_available_leaderboard_fields()
 
-            # Metrics
-            "hacks": ["hacks", "portal hacks"],
-            "xm_collected": ["xm collected", "xm", "total xm"],
-            "portals_captured": ["portals captured", "portals"],
-            "resonators_deployed": ["resonators deployed", "resonators"],
-            "links_created": ["links created", "links"],
-            "fields_created": ["control fields created", "fields", "control fields"],
-            "mods_deployed": ["mods deployed", "mods"],
-            "resonators_destroyed": ["resonators destroyed"],
-            "portals_neutralized": ["portals neutralized", "neutralized"],
-            "distance_walked": ["distance walked", "distance", "km walked"]
-        }
-
-        # Extract relevant data
+        # Extract relevant data using exact field names
         result = {}
 
-        for field_name, possible_keys in leaderboard_fields.items():
-            # Try to find the value for this field
-            value = None
-            for key in processed_data:
-                if key.lower() in [pk.lower() for pk in possible_keys]:
-                    value = processed_data[key]
-                    break
+        for field_name in supported_fields:
+            if field_name in processed_data:
+                value = processed_data[field_name]
 
-            if value is not None:
-                # Try to convert numeric values
-                if field_name not in ["agent_name", "agent_faction", "time_span"]:
+                # Basic info fields that should remain as strings
+                string_fields = {"Agent Name", "Agent Faction", "Time Span"}
+
+                if field_name not in string_fields:
                     try:
                         # Remove commas and convert to int
                         clean_value = value.replace(',', '').replace(' ', '')

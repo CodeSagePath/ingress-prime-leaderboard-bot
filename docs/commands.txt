@@ -18,7 +18,7 @@ Here's the list of all commands for your bot:
 /reject_verification - Reject a verification request (admin only)
 /backup - Manually trigger a backup (admin only)
 /verify - Start verification process for submission
-/help - Help message for primestatsbot
+/help - Help message for the bot
 /settings - Configure formatting settings for stats display
 /broadcast - Broadcast a message to all users (admin only)
 /stats - Show usage statistics (admin only)

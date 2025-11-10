@@ -6,18 +6,15 @@ Provides comprehensive health monitoring for server deployment
 import asyncio
 import logging
 import os
-import sys
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, Optional
-import json
 import psutil
 
 from sqlalchemy import text
 from .config import Settings, load_settings
 from .database import build_engine, build_session_factory
-from .models import Agent, Submission
 
 logger = logging.getLogger(__name__)
 
@@ -337,32 +334,3 @@ def get_health_checker(settings: Optional[Settings] = None) -> HealthChecker:
     return _health_checker
 
 
-def create_health_check_response(settings: Settings, detailed: bool = False) -> Dict[str, Any]:
-    """Create health check response for HTTP endpoints."""
-    basic_response = {
-        "status": "healthy",
-        "timestamp": datetime.now().isoformat(),
-        "service": "ingress-prime-leaderboard-bot",
-        "version": "unknown",
-        "environment": settings.environment
-    }
-
-    if detailed:
-        return {
-            **basic_response,
-            "configuration": {
-                "bot_name": settings.bot_name,
-                "dashboard_enabled": settings.dashboard_enabled,
-                "monitoring": {
-                    "health_check_enabled": settings.monitoring.health_check_enabled,
-                    "log_to_file": settings.monitoring.log_to_file,
-                }
-            },
-            "endpoints": {
-                "health": settings.monitoring.health_check_path,
-                "dashboard": f"/dashboard" if settings.dashboard_enabled else None,
-                "metrics": settings.monitoring.metrics_path if settings.monitoring.metrics_enabled else None
-            }
-        }
-
-    return basic_response

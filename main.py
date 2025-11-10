@@ -10,8 +10,7 @@ import os
 import sys
 import uvicorn
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone, timedelta
+from datetime import datetime 
 
 from bot.config import load_settings
 
@@ -23,69 +22,7 @@ sys.path.insert(0, str(project_root))
 from dotenv import load_dotenv
 load_dotenv(project_root / ".env")
 
-# Dictionary to track bot messages for auto-deletion
-bot_messages = {}  # {message_id: (timestamp, chat_id)}
-
-# Global variable for bot message cleanup timing
-bot_message_cleanup_minutes = 5
-
 logger = logging.getLogger(__name__)
-
-
-async def schedule_bot_message_deletion(context, message_id: int, chat_id: int, delete_after_minutes: int):
-    """Schedule deletion of bot message after specified minutes"""
-    try:
-        await asyncio.sleep(delete_after_minutes * 60)
-
-        try:
-            await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
-            logger.info(f"Auto-deleted bot message {message_id} from chat {chat_id}")
-        except Exception as e:
-            logger.warning(f"Failed to delete bot message {message_id} from chat {chat_id}: {e}")
-        finally:
-            # Remove from tracking
-            if message_id in bot_messages:
-                del bot_messages[message_id]
-
-    except asyncio.CancelledError:
-        # Task was cancelled, likely due to shutdown
-        if message_id in bot_messages:
-            del bot_messages[message_id]
-    except Exception as e:
-        logger.error(f"Error in bot message deletion task for message {message_id}: {e}")
-
-
-async def track_and_schedule_deletion(context, message, delete_after_minutes: int = 5):
-    """Track bot message and schedule its deletion"""
-    if message and delete_after_minutes > 0:
-        message_id = message.message_id
-        chat_id = message.chat.id
-        current_time = datetime.now(timezone.utc)
-
-        # Track the message
-        bot_messages[message_id] = (current_time, chat_id)
-
-        # Schedule deletion
-        asyncio.create_task(schedule_bot_message_deletion(context, message_id, chat_id, delete_after_minutes))
-
-
-async def send_with_auto_delete(context, text: str, delete_after_minutes: int = 5, reply_to_message_id: int = None, parse_mode: str = None):
-    """Send a message and schedule its auto-deletion"""
-    try:
-        message = await context.bot.send_message(
-            chat_id=context.effective_chat.id,
-            text=text,
-            reply_to_message_id=reply_to_message_id,
-            parse_mode=parse_mode
-        )
-
-        # Schedule deletion of this bot message
-        await track_and_schedule_deletion(context, message, delete_after_minutes)
-        return message
-
-    except Exception as e:
-        logger.error(f"Failed to send message with auto-deletion: {e}")
-        return None
 
 
 async def start_dashboard_server(settings):
@@ -277,11 +214,6 @@ if __name__ == "__main__":
         """Bot process function"""
         try:
             print("🤖 Starting Telegram Bot...")
-
-            # Store cleanup settings globally for the bot process
-            global bot_message_cleanup_minutes
-            bot_message_cleanup_minutes = bot_settings['bot_message_cleanup_minutes']
-
             asyncio.run(main())
         except Exception as e:
             print(f"❌ Bot error: {e}")
@@ -289,13 +221,9 @@ if __name__ == "__main__":
     # Load settings once for configuration display
     settings = load_settings()
 
-    # Bot message auto-deletion configuration
-    bot_message_cleanup_minutes = int(os.getenv('BOT_MESSAGE_CLEANUP_MINUTES', '5'))
-
     # Pass settings to bot process
     bot_settings = {
-        'settings': settings,
-        'bot_message_cleanup_minutes': bot_message_cleanup_minutes
+        'settings': settings
     }
 
     # Start processes
@@ -317,7 +245,6 @@ if __name__ == "__main__":
 
     print(f"🚀 Ingress Prime Leaderboard is running!")
     print(f"   • Bot: Active")
-    print(f"   • Bot message cleanup: {bot_message_cleanup_minutes} minutes")
     if not args.no_dashboard:
         if settings.dashboard_enabled:
             print(f"   • Dashboard: http://localhost:{settings.dashboard_port}")

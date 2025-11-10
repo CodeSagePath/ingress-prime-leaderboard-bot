@@ -12,6 +12,9 @@ __pycache__/
 .claude
 .marscode
 
+# Misc. (Contains actual data statistics)
+helpers/
+
 # Database files
 *.sqlite3
 *.db

@@ -14,8 +14,6 @@ dev:
 run:
 	python main.py
 
-run-termux:
-	python scripts/run_termux.py
 
 # Testing
 test:

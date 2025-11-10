@@ -30,7 +30,7 @@ from telegram.ext import (
 from .config import Settings, load_settings, validate_settings, print_environment_summary
 from .dashboard import create_dashboard_app
 from .database import build_engine, build_session_factory, init_models, session_scope
-from .health import get_health_checker, create_health_check_response
+from .health import get_health_checker
 from .jobs.deletion import cleanup_expired_group_messages, schedule_message_deletion
 from .jobs.backup import perform_backup, manual_backup_command
 from .models import Agent, GroupMessage, GroupPrivacyMode, GroupSetting, PendingAction, Submission, WeeklyStat, UserSetting
@@ -86,24 +86,6 @@ def escape_markdown_v2(text: str) -> str:
     return text
 
 
-def convert_datetime_to_iso(data):
-    """
-    Recursively convert datetime objects to ISO format strings in a dictionary.
-    
-    Args:
-        data: The data to process (dict, list, or any other type)
-        
-    Returns:
-        The data with datetime objects converted to ISO format strings
-    """
-    if isinstance(data, dict):
-        return {key: convert_datetime_to_iso(value) for key, value in data.items()}
-    elif isinstance(data, list):
-        return [convert_datetime_to_iso(item) for item in data]
-    elif isinstance(data, datetime):
-        return data.isoformat()
-    else:
-        return data
 
 
 _ensure_agents_table()
@@ -919,6 +901,67 @@ def _normalize_row(row_map: dict[str, str], headers: list[str], cycle_index: int
     return normalized
 
 
+def parse_comma_separated_message(lines: list[str]) -> dict[str, Any] | list[dict[str, Any]] | None:
+    """
+    Parse comma-separated key-value format data.
+
+    Args:
+        lines: List of lines containing header and data rows
+
+    Returns:
+        Normalized data dict or list of dicts, or None if parsing fails
+    """
+    try:
+        # Import here to avoid circular imports
+        from .utils.data_mapping import get_mapping_manager, DynamicMappingManager
+
+        header_line = lines[0]
+        data_line = lines[1] if len(lines) > 1 else ""
+
+        # Use the mapping manager to process key-value data
+        mapping_manager = get_mapping_manager()
+
+        # Process the key-value data
+        processed_data = mapping_manager.process_key_value_data(header_line, data_line)
+
+        if not processed_data:
+            logger.error("Failed to process comma-separated data")
+            return None
+
+        # Validate required fields
+        required_fields = ["Agent Name", "Agent Faction", "Lifetime AP"]
+        for field in required_fields:
+            if field not in processed_data or not processed_data[field].strip():
+                logger.error(f"Missing required field: {field}")
+                return None
+
+        # Find cycle header (look for fields starting with '+')
+        cycle_headers = [field for field in processed_data.keys() if field.startswith('+')]
+        cycle_header = cycle_headers[0] if cycle_headers else "+Default Cycle"
+
+        # Update the current cycle file
+        try:
+            CURRENT_CYCLE_FILE.write_text(cycle_header, encoding="utf-8")
+        except OSError:
+            logger.warning("Failed to update current cycle file")
+
+        # Normalize the data using existing logic
+        headers = list(processed_data.keys())
+        normalized_data = _normalize_row(processed_data, headers,
+                                       headers.index(cycle_header) if cycle_header in headers else 0,
+                                       cycle_header)
+
+        if normalized_data is None:
+            logger.error("Failed to normalize processed data")
+            return None
+
+        return normalized_data
+
+    except Exception as e:
+        logger.error(f"Error parsing comma-separated message: {e}")
+        return None
+
+
 def parse_ingress_message(text: str) -> dict[str, Any] | list[dict[str, Any]] | None:
     if not text or not text.strip():
         return None
@@ -926,6 +969,11 @@ def parse_ingress_message(text: str) -> dict[str, Any] | list[dict[str, Any]] | 
     if len(lines) < 2:
         return None
     header_line = lines[0]
+
+    # Check for comma-separated format (key-value format)
+    if "," in header_line:
+        return parse_comma_separated_message(lines)
+
     use_tabs = "\t" in header_line
     if use_tabs:
         headers = [part.strip() for part in header_line.split("\t")]
@@ -1154,6 +1202,15 @@ async def leaderboard_resonators(update: Update, context: ContextTypes.DEFAULT_T
     if context.args is None:
         context.args = []
     context.args = list(context.args) + ["resonators"]
+    await leaderboard(update, context)
+
+
+async def betatokens(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /betatokens command - shortcut for /leaderboard betatokens."""
+    # Simulate /leaderboard betatokens command
+    if context.args is None:
+        context.args = []
+    context.args = list(context.args) + ["betatokens"]
     await leaderboard(update, context)
 
 
@@ -1917,9 +1974,9 @@ async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return ConversationHandler.END
     
     session_factory = context.application.bot_data["session_factory"]
+    settings: Settings = context.application.bot_data["settings"]
     async with session_scope(session_factory) as session:
         user_setting = await _get_or_create_user_setting(session, update.effective_user.id)
-        settings = await get_settings(session)
         
         # Format current settings for display
         date_format_preview = datetime.now().strftime(user_setting.date_format)
@@ -2612,6 +2669,10 @@ async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     metric = "ap"  # default metric
     limit = 10
 
+    # Import field mapper for dynamic metric mapping
+    from .utils.field_mapper import get_field_mapper
+    field_mapper = get_field_mapper()
+
     # Parse arguments
     for arg in args:
         arg_lower = arg.lower()
@@ -2623,38 +2684,26 @@ async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             time_span = "MONTHLY"
         elif arg_lower in ["daily", "day"]:
             time_span = "DAILY"
-        elif arg_lower in ["hacks", "hack"]:
-            metric = "hacks"
-        elif arg_lower in ["xm", "xm_collected", "xm collected"]:
-            metric = "xm_collected"
-        elif arg_lower in ["portals", "portals_captured", "portals captured"]:
-            metric = "portals_captured"
-        elif arg_lower in ["resonators", "resonators_deployed", "resonators deployed"]:
-            metric = "resonators_deployed"
-        elif arg_lower in ["links", "links_created", "links created"]:
-            metric = "links_created"
-        elif arg_lower in ["fields", "fields_created", "fields created"]:
-            metric = "fields_created"
-        elif arg_lower in ["mods", "mods_deployed", "mods deployed"]:
-            metric = "mods_deployed"
-        elif arg_lower in ["destroyed", "resonators_destroyed", "resonators destroyed"]:
-            metric = "resonators_destroyed"
-        elif arg_lower in ["neutralized", "portals_neutralized", "portals neutralized"]:
-            metric = "portals_neutralized"
-        elif arg_lower in ["distance", "distance_walked", "distance walked", "km"]:
-            metric = "distance_walked"
+        elif arg_lower in ["beta", "betatokens"]:
+            metric = "betatokens"
         elif arg_lower.isdigit():
             limit = min(int(arg_lower), 50)  # Max 50 entries
         elif arg_lower == "top":
             continue  # Skip 'top' keyword
         else:
-            # Try to handle combined format like "weekly hacks"
-            if arg_lower in ["weekly", "week"]:
-                time_span = "WEEKLY"
-            elif arg_lower in ["monthly", "month"]:
-                time_span = "MONTHLY"
-            elif arg_lower in ["all", "all time", "lifetime"]:
-                time_span = "ALL TIME"
+            # Try to find metric using field mapper
+            field_name = field_mapper.get_field_for_command(arg_lower)
+            if field_name:
+                # Convert field name to metric name (snake_case)
+                metric = field_name.lower().replace(" ", "_").replace("+", "plus_")
+            else:
+                # Fallback for combined format like "weekly hacks"
+                if arg_lower in ["weekly", "week"]:
+                    time_span = "WEEKLY"
+                elif arg_lower in ["monthly", "month"]:
+                    time_span = "MONTHLY"
+                elif arg_lower in ["all", "all time", "lifetime"]:
+                    time_span = "ALL TIME"
 
     # Default to weekly if no time span specified for certain metrics
     if time_span is None and metric != "ap":
@@ -2662,7 +2711,18 @@ async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     # Get the appropriate title
     time_span_text = time_span if time_span else "ALL TIME"
-    metric_text = metric.replace("_", " ").title() if metric != "ap" else "AP"
+
+    if metric == "ap":
+        metric_text = "AP"
+    else:
+        # Try to get display name from field mapper
+        display_name = field_mapper.get_display_name_for_command(metric.lower())
+        if display_name:
+            metric_text = display_name
+        else:
+            metric_text = metric.replace("_", " ").title()
+            # Convert plus_tokens back to +Beta Tokens
+            metric_text = metric_text.replace("Plus Tokens", "+Beta Tokens")
 
     if metric == "ap":
         title = f"Top {limit} agents - {time_span_text}"

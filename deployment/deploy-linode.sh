@@ -111,7 +111,13 @@ pip install -r requirements.txt
 # Setup environment variables
 print_status "Setting up environment configuration..."
 if [ ! -f .env ]; then
-    cp .env.example .env
+    echo "Creating .env file from template..."
+    cat > .env << 'EOF'
+# Basic configuration - edit these values
+BOT_TOKEN=YOUR_TELEGRAM_BOT_TOKEN_HERE
+ADMIN_USER_IDS=YOUR_TELEGRAM_USER_ID
+ENVIRONMENT=production
+EOF
     print_warning "Please edit .env file with your bot configuration:"
     print_warning "  - BOT_TOKEN (required)"
     print_warning "  - ADMIN_USER_IDS (required)"
@@ -129,21 +135,21 @@ else
     print_warning "Bot test failed. Please check your .env configuration."
 fi
 
-# Setup PM2 ecosystem
-print_status "Configuring PM2 for process management..."
-cp ecosystem.config.js ecosystem.config.js.backup
-
-# Setup logging directory
-print_status "Creating log directory..."
-mkdir -p /var/log/ingress-bot
-
-# Start the bot with PM2
-print_status "Starting bot with PM2..."
-pm2 start ecosystem.config.js
-pm2 save
-
-# Setup PM2 startup script
-pm2 startup
+# Setup systemd service
+print_status "Configuring systemd service for bot..."
+if [ -f ingress-bot.service ]; then
+    sudo cp ingress-bot.service /etc/systemd/system/
+    sudo systemctl daemon-reload
+    sudo systemctl enable ingress-bot
+    sudo systemctl start ingress-bot
+    print_status "Bot started with systemd service"
+else
+    print_warning "ingress-bot.service not found, using manual start"
+    mkdir -p /var/log/ingress-bot
+    nohup python main.py > /var/log/ingress-bot/bot.log 2>&1 &
+    echo $! > bot.pid
+    print_status "Bot started manually"
+fi
 
 # Configure firewall
 print_status "Configuring firewall..."

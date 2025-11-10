@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import os
-import subprocess
 import tempfile
 from datetime import datetime, timezone
 from typing import Optional

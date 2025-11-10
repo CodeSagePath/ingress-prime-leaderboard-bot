@@ -1,8 +1,6 @@
 from dataclasses import dataclass, field
 import logging
 import os
-from typing import Optional
-import socket
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -14,17 +12,6 @@ def _bool(value: str | None, default: bool) -> bool:
     return value.lower() in {"1", "true", "yes", "on"}
 
 
-def _get_local_ip() -> str:
-    """Get the local IP address for server binding."""
-    try:
-        # Create a dummy socket to determine local IP
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-        s.close()
-        return ip
-    except Exception:
-        return "127.0.0.1"
 
 
 @dataclass
@@ -32,25 +19,14 @@ class ServerConfig:
     """Server-specific configuration settings."""
     host: str = "0.0.0.0"
     port: int = 8080
-    workers: int = 1
     log_level: str = "INFO"
-    max_connections: int = 1000
-    keepalive_timeout: int = 65
-    access_log: bool = True
-    graceful_timeout: int = 30
-    timeout: int = 120
 
 
 @dataclass
 class DatabaseConfig:
-    """Database configuration with enhanced server options."""
+    """Database configuration."""
     url: str = "sqlite+aiosqlite:///./data/bot.db"
-    pool_size: int = 10
-    max_overflow: int = 20
-    pool_timeout: int = 30
-    pool_recycle: int = 3600
     pool_pre_ping: bool = True
-    echo: bool = False
 
 
 @dataclass
@@ -67,21 +43,13 @@ class RedisConfig:
 @dataclass
 class SecurityConfig:
     """Security configuration for server deployment."""
-    admin_token: str = ""
-    allowed_hosts: list[str] = field(default_factory=list)
-    rate_limit_enabled: bool = True
-    rate_limit_per_minute: int = 30
-    request_timeout: int = 30
-    max_request_size: int = 10 * 1024 * 1024  # 10MB
+    # Reserved for future security features
 
 
 @dataclass
 class MonitoringConfig:
     """Monitoring and health check configuration."""
     health_check_enabled: bool = True
-    health_check_path: str = "/health"
-    metrics_enabled: bool = False
-    metrics_path: str = "/metrics"
     log_to_file: bool = False
     log_file_path: str = "./logs/app.log"
     log_max_size: str = "100MB"
@@ -93,7 +61,6 @@ class Settings:
     # Core bot settings
     telegram_token: str
     bot_name: str = "Ingress Prime Leaderboard"
-    bot_description: str = "Track your Ingress Prime stats and compete with other agents!"
 
     # Enhanced configurations
     database: DatabaseConfig = field(default_factory=DatabaseConfig)
@@ -127,17 +94,12 @@ class Settings:
     backup_retention_count: int = 7
     backup_compress: bool = True
 
-    # Performance settings
-    cache_ttl_seconds: int = 300
-    max_retries: int = 3
-    retry_delay: float = 1.0
-
+    
 
 def load_settings() -> Settings:
     # Core settings
     telegram_token = os.environ.get("BOT_TOKEN", "")
     bot_name = os.environ.get("BOT_NAME", "Ingress Prime Leaderboard")
-    bot_description = os.environ.get("BOT_DESCRIPTION", "Track your Ingress Prime stats and compete with other agents!")
 
     # Environment detection
     environment = os.environ.get("ENVIRONMENT", "production")
@@ -147,12 +109,7 @@ def load_settings() -> Settings:
     # Database configuration
     database_config = DatabaseConfig(
         url=os.environ.get("DATABASE_URL", "sqlite+aiosqlite:///./data/bot.db"),
-        pool_size=int(os.environ.get("DB_POOL_SIZE", "10")),
-        max_overflow=int(os.environ.get("DB_MAX_OVERFLOW", "20")),
-        pool_timeout=int(os.environ.get("DB_POOL_TIMEOUT", "30")),
-        pool_recycle=int(os.environ.get("DB_POOL_RECYCLE", "3600")),
         pool_pre_ping=_bool(os.environ.get("DB_POOL_PRE_PING"), True),
-        echo=_bool(os.environ.get("DB_ECHO"), debug),
     )
 
     # Redis configuration
@@ -169,31 +126,15 @@ def load_settings() -> Settings:
     server_config = ServerConfig(
         host=os.environ.get("SERVER_HOST", "0.0.0.0"),
         port=int(os.environ.get("SERVER_PORT", "8080")),
-        workers=int(os.environ.get("SERVER_WORKERS", "1")),
         log_level=os.environ.get("LOG_LEVEL", "INFO"),
-        max_connections=int(os.environ.get("MAX_CONNECTIONS", "1000")),
-        keepalive_timeout=int(os.environ.get("KEEPALIVE_TIMEOUT", "65")),
-        access_log=_bool(os.environ.get("ACCESS_LOG"), True),
-        graceful_timeout=int(os.environ.get("GRACEFUL_TIMEOUT", "30")),
-        timeout=int(os.environ.get("TIMEOUT", "120")),
     )
 
     # Security configuration
-    security_config = SecurityConfig(
-        admin_token=os.environ.get("SECURITY_ADMIN_TOKEN", ""),
-        allowed_hosts=os.environ.get("ALLOWED_HOSTS", "").split(",") if os.environ.get("ALLOWED_HOSTS") else [],
-        rate_limit_enabled=_bool(os.environ.get("RATE_LIMIT_ENABLED"), True),
-        rate_limit_per_minute=int(os.environ.get("RATE_LIMIT_PER_MINUTE", "30")),
-        request_timeout=int(os.environ.get("REQUEST_TIMEOUT", "30")),
-        max_request_size=int(os.environ.get("MAX_REQUEST_SIZE", str(10 * 1024 * 1024))),
-    )
+    security_config = SecurityConfig()
 
     # Monitoring configuration
     monitoring_config = MonitoringConfig(
         health_check_enabled=_bool(os.environ.get("HEALTH_CHECK_ENABLED"), True),
-        health_check_path=os.environ.get("HEALTH_CHECK_PATH", "/health"),
-        metrics_enabled=_bool(os.environ.get("METRICS_ENABLED"), False),
-        metrics_path=os.environ.get("METRICS_PATH", "/metrics"),
         log_to_file=_bool(os.environ.get("LOG_TO_FILE"), environment == "production"),
         log_file_path=os.environ.get("LOG_FILE_PATH", "./logs/app.log"),
         log_max_size=os.environ.get("LOG_MAX_SIZE", "100MB"),
@@ -217,7 +158,7 @@ def load_settings() -> Settings:
     dashboard_enabled = _bool(os.environ.get("DASHBOARD_ENABLED"), False)
     dashboard_host = os.environ.get("DASHBOARD_HOST", server_config.host)
     dashboard_port = int(os.environ.get("DASHBOARD_PORT", "8000"))
-    dashboard_admin_token = os.environ.get("DASHBOARD_ADMIN_TOKEN", security_config.admin_token)
+    dashboard_admin_token = os.environ.get("DASHBOARD_ADMIN_TOKEN", "")
     text_only_mode = _bool(os.environ.get("TEXT_ONLY_MODE"), False)
 
     # Backup configuration
@@ -228,22 +169,16 @@ def load_settings() -> Settings:
     backup_retention_count = int(os.environ.get("BACKUP_RETENTION_COUNT", "7"))
     backup_compress = _bool(os.environ.get("BACKUP_COMPRESS"), True)
 
-    # Performance settings
-    cache_ttl_seconds = int(os.environ.get("CACHE_TTL_SECONDS", "300"))
-    max_retries = int(os.environ.get("MAX_RETRIES", "3"))
-    retry_delay = float(os.environ.get("RETRY_DELAY", "1.0"))
-
+    
     # Environment-specific adjustments
     if environment == "development":
         server_config.host = "127.0.0.1"
-        database_config.echo = True
         monitoring_config.log_to_file = False
 
     return Settings(
         telegram_token=telegram_token,
         bot_name=bot_name,
-        bot_description=bot_description,
-        database=database_config,
+                database=database_config,
         redis=redis_config,
         server=server_config,
         security=security_config,
@@ -267,10 +202,7 @@ def load_settings() -> Settings:
         backup_schedule=backup_schedule,
         backup_retention_count=backup_retention_count,
         backup_compress=backup_compress,
-        cache_ttl_seconds=cache_ttl_seconds,
-        max_retries=max_retries,
-        retry_delay=retry_delay,
-    )
+            )
 
 
 def validate_settings(settings: Settings) -> list[str]:

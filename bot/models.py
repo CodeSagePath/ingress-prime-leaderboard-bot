@@ -31,7 +31,6 @@ class Agent(Base):
     telegram_id: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=False, index=True)
     codename: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
     faction: Mapped[str] = mapped_column(String(8), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     submissions: Mapped[list["Submission"]] = relationship(back_populates="agent", cascade="all, delete-orphan")
 
@@ -75,7 +74,6 @@ class WeeklyStat(Base):
     value: Mapped[int] = mapped_column(Integer, nullable=False)
     week_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     week_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     __table_args__ = (
         CheckConstraint("faction IN ('ENL','RES')", name="weekly_stats_faction_check"),
@@ -107,7 +105,6 @@ class GroupSetting(Base):
     chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False, unique=True, index=True)
     privacy_mode: Mapped[str] = mapped_column(String(16), nullable=False, default=GroupPrivacyMode.public.value)
     retention_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=60)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     __table_args__ = (
         CheckConstraint("privacy_mode IN ('strict','soft','public')", name="group_settings_privacy_mode_check"),
@@ -123,7 +120,6 @@ class PendingAction(Base):
     chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
     message_id = mapped_column(Integer, nullable=True)
     executed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
-    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
     
     # Add composite index for better performance on old Android devices
     __table_args__ = (
@@ -136,19 +132,13 @@ class Verification(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     submission_id: Mapped[int] = mapped_column(ForeignKey("submissions.id", ondelete="CASCADE"), nullable=False, index=True)
-    screenshot_path: Mapped[str] = mapped_column(String(255), nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default=VerificationStatus.pending.value)
-    admin_id = mapped_column(BigInteger, nullable=True, index=True)
-    verified_at = mapped_column(DateTime(timezone=True), nullable=True)
-    rejection_reason = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     submission: Mapped["Submission"] = relationship(back_populates="verification")
 
     __table_args__ = (
         CheckConstraint("status IN ('pending','approved','rejected')", name="verification_status_check"),
         # Add composite indexes for better performance on old Android devices
-        Index('idx_verification_status_created', 'status', 'created_at'),
         Index('idx_verification_submission', 'submission_id'),
     )
 
@@ -162,7 +152,6 @@ class UserSetting(Base):
     number_format: Mapped[str] = mapped_column(String(8), nullable=False, default="comma")
     leaderboard_size: Mapped[int] = mapped_column(Integer, nullable=False, default=10)
     show_emojis: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     __table_args__ = (
