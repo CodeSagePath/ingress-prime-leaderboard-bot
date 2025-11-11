@@ -32,7 +32,7 @@ class DatabaseConfig:
 @dataclass
 class RedisConfig:
     """Redis configuration for server deployment."""
-    url: str = "redis://localhost:6379/0"
+    url: str = "redis://127.0.0.1:6379/0"
     max_connections: int = 20
     retry_on_timeout: bool = True
     health_check_interval: int = 30
@@ -114,7 +114,7 @@ def load_settings() -> Settings:
 
     # Redis configuration
     redis_config = RedisConfig(
-        url=os.environ.get("REDIS_URL", "redis://localhost:6379/0"),
+        url=os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/0"),
         max_connections=int(os.environ.get("REDIS_MAX_CONNECTIONS", "20")),
         retry_on_timeout=_bool(os.environ.get("REDIS_RETRY_ON_TIMEOUT"), True),
         health_check_interval=int(os.environ.get("REDIS_HEALTH_CHECK_INTERVAL", "30")),

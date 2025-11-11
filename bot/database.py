@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
+import os
 
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
@@ -17,10 +18,10 @@ def build_engine(settings: Settings) -> AsyncEngine:
         settings.database.url,
         echo=False,
         future=True,
-        pool_size=5,  # Reduced pool size for lower memory usage
-        max_overflow=10,  # Reduced overflow for lower memory usage
+        pool_size=int(os.environ.get("DB_POOL_SIZE", "5")),  # Configurable pool size
+        max_overflow=int(os.environ.get("DB_MAX_OVERFLOW", "10")),  # Configurable overflow
         pool_pre_ping=True,  # Check connections before use
-        pool_recycle=3600,  # Recycle connections after 1 hour
+        pool_recycle=int(os.environ.get("DB_POOL_RECYCLE", "3600")),  # Configurable connection recycling
     )
 
 

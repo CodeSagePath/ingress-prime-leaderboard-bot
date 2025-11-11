@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 from sqlalchemy import text
 import sqlite3
 import re
@@ -1752,9 +1753,10 @@ async def last_week_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if not update.message:
         return
     settings: Settings = context.application.bot_data["settings"]
-    since = datetime.now(timezone.utc) - timedelta(days=7)
+    since = datetime.now(timezone.utc) - timedelta(days=int(os.environ.get("SUBMISSION_RETENTION_DAYS", "7")))
     rows = await _fetch_cycle_leaderboard(10, since=since)
-    await _send_cycle_leaderboard(update, settings, rows, "Top 10 agents — last 7 days")
+    retention_days = int(os.environ.get("SUBMISSION_RETENTION_DAYS", "7"))
+    await _send_cycle_leaderboard(update, settings, rows, f"Top 10 agents — last {retention_days} days")
 
 
 async def last_cycle_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -2363,7 +2365,7 @@ async def reset_weekly_scores(application: Application, session_factory: async_s
     # Improved timezone handling - ensure we're using UTC consistently
     now = datetime.now(timezone.utc)
     week_end = now
-    week_start = week_end - timedelta(days=7)
+    week_start = week_end - timedelta(days=int(os.environ.get("WEEKLY_CYCLE_DAYS", "7")))
     
     try:
         # Use a transaction to prevent race conditions during score reset
@@ -3256,7 +3258,7 @@ async def build_application() -> Application:
     scheduler.add_job(
         cleanup_expired_group_messages,
         trigger="interval",
-        minutes=7,
+        minutes=int(os.environ.get("CLEANUP_INTERVAL_MINUTES", "7")),
         args=(application, session_factory),
         max_instances=1,
         misfire_grace_time=60,
@@ -3355,15 +3357,16 @@ async def async_main() -> None:
             # Add periodic health check job
             scheduler = application.bot_data["scheduler"]
             if settings.monitoring.health_check_enabled:
+                health_check_interval = int(os.environ.get("HEALTH_CHECK_INTERVAL_MINUTES", "5"))
                 scheduler.add_job(
                     lambda: asyncio.create_task(health_checker.comprehensive_health_check()),
                     trigger="interval",
-                    minutes=5,
+                    minutes=health_check_interval,
                     max_instances=1,
                     misfire_grace_time=60,
                     coalesce=True,
                 )
-                print("💓 Health monitoring enabled (every 5 minutes)")
+                print(f"💓 Health monitoring enabled (every {health_check_interval} minutes)")
 
             scheduler.start()
 

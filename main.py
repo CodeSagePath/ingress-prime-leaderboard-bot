@@ -121,7 +121,7 @@ def run_dashboard_server_sync(dashboard_app, settings):
 
     # Get configuration from environment variables as fallback
     host = getattr(settings, 'dashboard_host', None) or os.getenv("DASHBOARD_HOST", "0.0.0.0")
-    port = getattr(settings, 'dashboard_port', None) or int(os.getenv("DASHBOARD_PORT", "8095"))
+    port = getattr(settings, 'dashboard_port', None) or int(os.getenv("DASHBOARD_PORT", "8000"))
 
     try:
         uvicorn.run(
@@ -200,7 +200,8 @@ async def main():
                     misfire_grace_time=60,
                     coalesce=True,
                 )
-                print("💓 Health monitoring enabled (every 5 minutes)")
+                health_check_interval = int(os.environ.get("HEALTH_CHECK_INTERVAL_MINUTES", "5"))
+                print(f"💓 Health monitoring enabled (every {health_check_interval} minutes)")
 
             scheduler.start()
 
@@ -330,7 +331,7 @@ if __name__ == "__main__":
     print(f"   • Bot message cleanup: {bot_message_cleanup_minutes} minutes")
     if not args.no_dashboard:
         if settings.dashboard_enabled:
-            print(f"   • Dashboard: http://localhost:{settings.dashboard_port}")
+            print(f"   • Dashboard: http://{settings.dashboard_host}:{settings.dashboard_port}")
         else:
             print(f"   • Dashboard: Disabled (set DASHBOARD_ENABLED=true)")
     print(f"   • Press Ctrl+C to stop both services")
