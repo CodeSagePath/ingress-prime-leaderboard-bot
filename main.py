@@ -117,11 +117,17 @@ async def start_dashboard_server(settings):
 def run_dashboard_server_sync(dashboard_app, settings):
     """Run dashboard server in a separate process (blocking)"""
     import uvicorn
+    import os
+
+    # Get configuration from environment variables as fallback
+    host = getattr(settings, 'dashboard_host', None) or os.getenv("DASHBOARD_HOST", "0.0.0.0")
+    port = getattr(settings, 'dashboard_port', None) or int(os.getenv("DASHBOARD_PORT", "8095"))
+
     try:
         uvicorn.run(
             dashboard_app,
-            host=settings.dashboard_host,
-            port=settings.dashboard_port,
+            host=host,
+            port=port,
             log_level="warning"
         )
     except Exception as e:
@@ -252,6 +258,11 @@ if __name__ == "__main__":
     def start_dashboard_process():
         """Dashboard process function"""
         try:
+            # Load environment variables from .env file
+            from dotenv import load_dotenv
+            project_root = Path(__file__).parent
+            load_dotenv(project_root / ".env")
+
             from bot.config import load_settings
             settings = load_settings()
             if not settings.dashboard_enabled:
