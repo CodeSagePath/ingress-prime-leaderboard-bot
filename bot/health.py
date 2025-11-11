@@ -251,34 +251,43 @@ class HealthChecker:
         """Perform comprehensive health check."""
         self.last_check = datetime.now()
 
-        # Run all checks concurrently
+        # Run mandatory checks concurrently
         checks = await asyncio.gather(
             self.check_database(),
-            self.check_redis(),
             asyncio.to_thread(self.check_system_resources),
             self.check_bot_functionality(),
             self.get_statistics(),
             return_exceptions=True
         )
 
-        database_result = checks[0] if not isinstance(checks[0], Exception) else {"status": "unhealthy", "message": str(checks[0])}
-        redis_result = checks[1] if not isinstance(checks[1], Exception) else {"status": "unhealthy", "message": str(checks[1])}
-        system_result = checks[2] if not isinstance(checks[2], Exception) else {"status": "unhealthy", "message": str(checks[2])}
-        bot_result = checks[3] if not isinstance(checks[3], Exception) else {"status": "unhealthy", "message": str(checks[3])}
-        stats_result = checks[4] if not isinstance(checks[4], Exception) else {}
+        # Run Redis check separately (optional)
+        try:
+            redis_check = await self.check_redis()
+        except Exception as e:
+            redis_check = {"status": "warning", "message": f"Redis not available: {str(e)}"}
 
-        # Determine overall status
-        statuses = [
+        database_result = checks[0] if not isinstance(checks[0], Exception) else {"status": "unhealthy", "message": str(checks[0])}
+        system_result = checks[1] if not isinstance(checks[1], Exception) else {"status": "unhealthy", "message": str(checks[1])}
+        bot_result = checks[2] if not isinstance(checks[2], Exception) else {"status": "unhealthy", "message": str(checks[2])}
+        stats_result = checks[3] if not isinstance(checks[3], Exception) else {}
+
+        # Redis check is optional
+        redis_result = redis_check
+
+        # Determine overall status (Redis is optional)
+        mandatory_statuses = [
             database_result.get("status", "unhealthy"),
-            redis_result.get("status", "unhealthy"),
             system_result.get("status", "unhealthy"),
             bot_result.get("status", "unhealthy")
         ]
 
-        if "unhealthy" in statuses:
+        # Include Redis in overall status but don't fail on Redis issues
+        all_statuses = mandatory_statuses + [redis_result.get("status", "warning")]
+
+        if "unhealthy" in mandatory_statuses:
             overall_status = "unhealthy"
             self.healthy = False
-        elif "warning" in statuses:
+        elif "warning" in all_statuses:
             overall_status = "warning"
             self.healthy = True
         else:

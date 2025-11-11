@@ -148,14 +148,12 @@ async def _get_metric_leaderboard(
             a.codename,
             a.faction,
             CAST(s.ap AS INTEGER) as ap,
-            CAST(json_extract(s.metrics, '$.{json_key}') AS INTEGER) as metric_value,
+            COALESCE(CAST(json_extract(s.metrics, '$.{json_key}') AS INTEGER), 0) as metric_value,
             s.submitted_at,
             s.metrics
         FROM agents a
         JOIN submissions s ON s.agent_id = a.id
-        WHERE json_extract(s.metrics, '$.{json_key}') IS NOT NULL
-            AND json_extract(s.metrics, '$.{json_key}') != ''
-            AND s.submitted_at = (
+        WHERE s.submitted_at = (
                 SELECT MAX(s2.submitted_at)
                 FROM submissions s2
                 WHERE s2.agent_id = a.id
@@ -164,7 +162,7 @@ async def _get_metric_leaderboard(
             )
             {f"AND s.chat_id = {chat_id}" if chat_id else ""}
             {f"AND s.time_span = '{time_span}'" if time_span else ""}
-        ORDER BY CAST(json_extract(s.metrics, '$.{json_key}') AS INTEGER) DESC, a.codename
+        ORDER BY COALESCE(CAST(json_extract(s.metrics, '$.{json_key}') AS INTEGER), 0) DESC, a.codename
         LIMIT {limit}
     """
 
@@ -174,6 +172,10 @@ async def _get_metric_leaderboard(
     processed_results = []
     for row in rows:
         codename, faction, ap, metric_value, submitted_at, metrics_json = row
+
+        # Skip agents with no data at all for this metric
+        if metric_value == 0 and ap == 0:
+            continue
 
         # Build complete metrics dictionary
         metrics_dict = {

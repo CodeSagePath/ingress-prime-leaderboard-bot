@@ -31,6 +31,51 @@ bot_message_cleanup_minutes = 5
 logger = logging.getLogger(__name__)
 
 
+def start_dashboard_process():
+    """Dashboard process function"""
+    try:
+        # Load environment variables from .env file
+        from dotenv import load_dotenv
+        project_root = Path(__file__).parent
+        load_dotenv(project_root / ".env")
+
+        from bot.config import load_settings
+        settings = load_settings()
+        if not settings.dashboard_enabled:
+            print("❌ Dashboard is disabled in configuration")
+            return
+
+        print("🌐 Starting Dashboard Server...")
+        import asyncio
+
+        def run_dashboard():
+            from bot.dashboard import start_dashboard_server, run_dashboard_server_sync
+            dashboard_app, _ = start_dashboard_server(settings)
+            if dashboard_app:
+                run_dashboard_server_sync(dashboard_app, settings)
+            else:
+                print("❌ Failed to initialize dashboard")
+
+        run_dashboard()
+    except Exception as e:
+        print(f"❌ Dashboard error: {e}")
+
+
+def start_bot_process(bot_settings):
+    """Bot process function"""
+    try:
+        print("🤖 Starting Telegram Bot...")
+
+        # Store cleanup settings globally for the bot process
+        global bot_message_cleanup_minutes
+        bot_message_cleanup_minutes = bot_settings['bot_message_cleanup_minutes']
+
+        from bot.main import main
+        asyncio.run(main())
+    except Exception as e:
+        print(f"❌ Bot error: {e}")
+
+
 async def schedule_bot_message_deletion(context, message_id: int, chat_id: int, delete_after_minutes: int):
     """Schedule deletion of bot message after specified minutes"""
     try:
@@ -241,7 +286,9 @@ async def main():
 
 if __name__ == "__main__":
     import argparse
+    import logging
     import multiprocessing
+    from pathlib import Path
 
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='Ingress Prime Leaderboard Bot')
@@ -250,55 +297,40 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # Configure logging
+    settings = load_settings()
+    log_level = getattr(logging, settings.server.log_level.upper(), logging.INFO)
+
     logging.basicConfig(
-        level=logging.WARNING,  # Reduce log noise for unified operation
+        level=log_level,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
     )
 
-    def start_dashboard_process():
-        """Dashboard process function"""
+    # Add file logging if enabled
+    if settings.monitoring.log_to_file:
         try:
-            # Load environment variables from .env file
-            from dotenv import load_dotenv
-            project_root = Path(__file__).parent
-            load_dotenv(project_root / ".env")
+            from logging.handlers import RotatingFileHandler
+            import os
 
-            from bot.config import load_settings
-            settings = load_settings()
-            if not settings.dashboard_enabled:
-                print("❌ Dashboard is disabled in configuration")
-                return
+            log_file = Path(settings.monitoring.log_file_path)
+            log_file.parent.mkdir(parents=True, exist_ok=True)
 
-            print("🌐 Starting Dashboard Server...")
-            import asyncio
+            file_handler = RotatingFileHandler(
+                log_file,
+                maxBytes=int(settings.monitoring.log_max_size.replace('MB', '')) * 1024 * 1024,
+                backupCount=settings.monitoring.log_backup_count
+            )
+            file_handler.setFormatter(
+                logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+            )
 
-            async def run_dashboard():
-                dashboard_app, _ = await start_dashboard_server(settings)
-                if dashboard_app:
-                    run_dashboard_server_sync(dashboard_app, settings)
-                else:
-                    print("❌ Failed to initialize dashboard")
+            root_logger = logging.getLogger()
+            root_logger.addHandler(file_handler)
 
-            asyncio.run(run_dashboard())
+            print(f"📝 Logging to file: {log_file}")
+
         except Exception as e:
-            print(f"❌ Dashboard error: {e}")
-
-    def start_bot_process(bot_settings):
-        """Bot process function"""
-        try:
-            print("🤖 Starting Telegram Bot...")
-
-            # Store cleanup settings globally for the bot process
-            global bot_message_cleanup_minutes
-            bot_message_cleanup_minutes = bot_settings['bot_message_cleanup_minutes']
-
-            asyncio.run(main())
-        except Exception as e:
-            print(f"❌ Bot error: {e}")
-
-    # Load settings once for configuration display
-    settings = load_settings()
+            print(f"⚠️ Failed to set up file logging: {e}")
 
     # Bot message auto-deletion configuration
     bot_message_cleanup_minutes = int(os.getenv('BOT_MESSAGE_CLEANUP_MINUTES', '5'))

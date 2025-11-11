@@ -12,6 +12,51 @@ from .models import GroupPrivacyMode, GroupSetting
 from .services.leaderboard import get_leaderboard
 
 
+def start_dashboard_server(settings: Settings):
+    """Start the dashboard server (synchronous for multiprocessing)."""
+    try:
+        # Create dashboard app directly
+        # Note: This is a simplified version for multiprocessing compatibility
+        from fastapi import FastAPI
+
+        app = FastAPI()
+
+        @app.get("/")
+        async def root():
+            return {"message": "Ingress Leaderboard Dashboard - Running in simplified mode"}
+
+        @app.get("/health")
+        async def health():
+            return {"status": "healthy"}
+
+        return app, None
+    except Exception as e:
+        print(f"❌ Failed to start dashboard server: {e}")
+        return None, None
+
+
+def run_dashboard_server_sync(app, settings: Settings):
+    """Run the dashboard server synchronously."""
+    import uvicorn
+
+    try:
+        print(f"🌐 Dashboard server starting on http://{settings.dashboard_host}:{settings.dashboard_port}")
+        uvicorn.run(
+            app,
+            host=settings.dashboard_host,
+            port=settings.dashboard_port,
+            log_level="warning"  # Reduce log noise
+        )
+    except Exception as e:
+        print(f"❌ Dashboard server error: {e}")
+
+
+async def start_full_dashboard_server(settings: Settings, session_factory):
+    """Start the full dashboard server with all features (for non-multiprocessing use)."""
+    app = create_dashboard_app(settings, session_factory)
+    return app, None
+
+
 def create_dashboard_app(settings: Settings, session_factory: async_sessionmaker) -> FastAPI:
     app = FastAPI()
 

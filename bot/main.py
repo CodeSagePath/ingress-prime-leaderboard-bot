@@ -2626,6 +2626,8 @@ def configure_handlers(application: Application) -> None:
     application.add_handler(CommandHandler("privacy", set_group_privacy))
     application.add_handler(CommandHandler("backup", manual_backup_command))
     application.add_handler(CommandHandler("stats", stats_command))
+    application.add_handler(CommandHandler("debugdata", debug_data_command))
+    application.add_handler(CommandHandler("leaderboard_weekly", leaderboard_weekly_command))
     application.add_handler(MessageHandler((filters.TEXT & ~filters.COMMAND) & (filters.ChatType.PRIVATE | filters.ChatType.GROUPS), handle_ingress_message))
     application.add_handler(MessageHandler(filters.ChatType.GROUPS, store_group_message))
 
@@ -2873,6 +2875,78 @@ async def myrank_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text(f"Your current rank: #{rank}")
     else:
         await update.message.reply_text("You haven't submitted any stats yet. Use /submit to get started.")
+
+
+async def debug_data_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Debug command to check available data in the database."""
+    if not update.message:
+        return
+
+    session_factory = context.application.bot_data["session_factory"]
+    chat_id = update.effective_chat.id if update.effective_chat else None
+
+    try:
+        async with session_scope(session_factory) as session:
+            # Get recent submissions
+            from sqlalchemy import text
+            query = f"""
+                SELECT
+                    a.codename,
+                    a.faction,
+                    s.ap,
+                    s.metrics,
+                    s.time_span,
+                    s.submitted_at,
+                    s.chat_id
+                FROM agents a
+                JOIN submissions s ON s.agent_id = a.id
+                {'WHERE s.chat_id = :chat_id' if chat_id else ''}
+                ORDER BY s.submitted_at DESC
+                LIMIT 5
+                """
+            result = await session.execute(text(query), {"chat_id": chat_id} if chat_id else {})
+            submissions = result.fetchall()
+
+            if not submissions:
+                await update.message.reply_text("🔍 No submissions found in the database.")
+                return
+
+            debug_info = ["🔍 **Recent Submissions:**\n"]
+            for i, (codename, faction, ap, metrics, time_span, submitted_at, sub_chat_id) in enumerate(submissions, 1):
+                debug_info.append(f"{i}. **{codename}** [{faction}]")
+                debug_info.append(f"   AP: {ap:,}")
+                debug_info.append(f"   Time Span: {time_span}")
+                debug_info.append(f"   Chat ID: {sub_chat_id}")
+                debug_info.append(f"   Submitted: {submitted_at}")
+
+                if metrics:
+                    debug_info.append("   **JSON Metrics:**")
+                    for key, value in list(metrics.items())[:5]:  # Show first 5 keys
+                        debug_info.append(f"     - {key}: {value}")
+                    if len(metrics) > 5:
+                        debug_info.append(f"     ... and {len(metrics) - 5} more")
+                else:
+                    debug_info.append("   **JSON Metrics:** None")
+                debug_info.append("")
+
+            debug_info.append("💡 **Note:** Leaderboard commands need JSON metrics data to work.")
+            await update.message.reply_text(
+                "\n".join(debug_info),
+                parse_mode="Markdown" if not context.application.bot_data["settings"].text_only_mode else None
+            )
+
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error debugging data: {str(e)}")
+
+
+async def leaderboard_weekly_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /leaderboard_weekly command - shortcut for weekly AP leaderboard."""
+    # Simulate /leaderboard weekly command
+    if context.args is None:
+        context.args = []
+    context.args = list(context.args) + ["weekly"]
+    await leaderboard(update, context)
+
 
 async def handle_mapping_setup_reply(message, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle replies during mapping setup process."""
@@ -3240,15 +3314,23 @@ async def build_application() -> Application:
             await session.execute(text("SELECT 1"))
         logger.info("Database connection successful")
 
-        # Test Redis connection
+    except Exception as e:
+        logger.error(f"Failed to connect to database: {e}")
+        print(f"\n❌ Database connection failed: {e}")
+        print("Please check your database configuration and ensure database is running.")
+        sys.exit(1)
+
+    # Test Redis connection (optional)
+    redis_available = False
+    try:
         redis_conn.ping()
         logger.info("Redis connection successful")
-
+        redis_available = True
     except Exception as e:
-        logger.error(f"Failed to connect to database/Redis: {e}")
-        print(f"\n❌ Connection failed: {e}")
-        print("Please check your configuration and ensure all services are running.")
-        sys.exit(1)
+        logger.warning(f"Redis connection failed: {e}")
+        print(f"⚠️ Redis not available: {e}")
+        print("Bot will continue without Redis features (caching, background jobs)")
+        redis_available = False
 
     # Initialize scheduler
     scheduler = AsyncIOScheduler(timezone=timezone.utc)
@@ -3261,8 +3343,9 @@ async def build_application() -> Application:
     application.bot_data["settings"] = settings
     application.bot_data["engine"] = engine
     application.bot_data["session_factory"] = session_factory
-    application.bot_data["queue"] = queue
-    application.bot_data["redis_connection"] = redis_conn
+    application.bot_data["queue"] = queue if redis_available else None
+    application.bot_data["redis_connection"] = redis_conn if redis_available else None
+    application.bot_data["redis_available"] = redis_available
     application.bot_data["scheduler"] = scheduler
     application.bot_data["health_checker"] = health_checker
 
@@ -3320,7 +3403,11 @@ async def build_application() -> Application:
         if task is not None:
             await task
         await engine.dispose()
-        redis_conn.close()
+        # Close Redis connection if available
+        if app.bot_data.get("redis_available", False):
+            redis_conn = app.bot_data.get("redis_connection")
+            if redis_conn:
+                redis_conn.close()
     if application.post_init is None:
         application.post_init = []
     if application.post_stop is None:
