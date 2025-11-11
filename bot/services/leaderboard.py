@@ -22,6 +22,7 @@ METRIC_CONFIGS = {
     "resonators_destroyed": {"field": "metrics", "json_key": "resonators_destroyed", "default": 0},
     "portals_neutralized": {"field": "metrics", "json_key": "portals_neutralized", "default": 0},
     "distance_walked": {"field": "metrics", "json_key": "distance_walked", "default": 0},
+    "betatokens": {"field": "metrics", "json_key": "betatokens", "default": 0},
 }
 
 

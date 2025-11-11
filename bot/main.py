@@ -94,37 +94,46 @@ _ensure_agents_table()
 
 
 
-async def get_agent_rank(session_factory, agent_id: int, time_span: str | None = None) -> int | None:
-    """Get the current rank of an agent."""
-    async with session_scope(session_factory) as session:
-        # Main query to get all agents ranked by AP
-        stmt = (
-            select(
-                Agent.id,
-                func.sum(Submission.ap).label("total_ap"),
+async def get_agent_rank(session_factory, agent_id: int, chat_id: int | None = None, time_span: str | None = None, metric: str = "ap") -> int | None:
+    """Get the current rank of an agent using the same logic as the leaderboard."""
+    try:
+        # Import the leaderboard service for consistent ranking
+        from .services.leaderboard import get_leaderboard
+
+        # Get the full leaderboard data with the same parameters as /leaderboard
+        async with session_scope(session_factory) as session:
+            # Get a larger set to ensure we can find the agent's rank
+            limit = 1000  # Increased limit to find rank
+            rows = await get_leaderboard(
+                session=session,
+                limit=limit,
+                chat_id=chat_id,
+                time_span=time_span,
+                metric=metric
             )
-            .join(Submission, Submission.agent_id == Agent.id)
-        )
 
-        if time_span is not None:
-            stmt = stmt.where(Submission.time_span == time_span)
-
-        stmt = (
-            stmt.group_by(Agent.id)
-            .order_by(
-                func.sum(Submission.ap).desc(),
-                Agent.codename
+        # Find the rank of the specified agent by matching their codename
+        # First get the agent's details
+        async with session_scope(session_factory) as session:
+            result = await session.execute(
+                select(Agent.id, Agent.codename).where(Agent.id == agent_id)
             )
-        )
+            agent_info = result.first()
 
-        result = await session.execute(stmt)
-        agents = result.all()
+        if not agent_info:
+            return None
 
-        # Find the rank of the specified agent
-        for rank, (agent_id_result, _) in enumerate(agents, start=1):
-            if agent_id_result == agent_id:
+        agent_search_id, agent_codename = agent_info
+
+        # Find the rank in the leaderboard results
+        for rank, (codename, faction, metric_value, metrics_dict) in enumerate(rows, start=1):
+            if codename == agent_codename:
                 return rank
 
+        return None  # Agent not found in leaderboard
+
+    except Exception as e:
+        logger.error(f"Error getting agent rank: {e}")
         return None
 
 
@@ -2731,9 +2740,9 @@ async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         else:
             # Try to find metric using field mapper
             field_name = field_mapper.get_field_for_command(arg_lower)
-            if field_name:
-                # Convert field name to metric name (snake_case)
-                metric = field_name.lower().replace(" ", "_").replace("+", "plus_")
+            if field_name is not None:
+                # Use the JSON key directly as the metric name
+                metric = field_name
             else:
                 # Fallback for combined format like "weekly hacks"
                 if arg_lower in ["weekly", "week"]:
@@ -2839,13 +2848,13 @@ async def top_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     await _send_cycle_leaderboard(update, settings, rows, f"Top 10 {faction} agents")
 
 async def myrank_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /myrank command - basic implementation."""
+    """Handle /myrank command - consistent with /leaderboard."""
     if not update.message or not update.effective_user:
         return
 
     session_factory = context.application.bot_data["session_factory"]
 
-    # Get agent's rank
+    # Get agent's details
     async with session_scope(session_factory) as session:
         result = await session.execute(
             select(Agent).where(Agent.telegram_id == update.effective_user.id)
@@ -2856,11 +2865,14 @@ async def myrank_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await update.message.reply_text("You haven't submitted any stats yet. Use /submit to get started.")
             return
 
-        rank = await get_agent_rank(session_factory, agent.id)
-        if rank:
-            await update.message.reply_text(f"Your current rank: #{rank}")
-        else:
-            await update.message.reply_text("You haven't submitted any stats yet. Use /submit to get started.")
+    # Get agent's rank using the same logic as /leaderboard
+    chat_id = update.effective_chat.id if update.effective_chat else None
+    rank = await get_agent_rank(session_factory, agent.id, chat_id=chat_id)
+
+    if rank:
+        await update.message.reply_text(f"Your current rank: #{rank}")
+    else:
+        await update.message.reply_text("You haven't submitted any stats yet. Use /submit to get started.")
 
 async def handle_mapping_setup_reply(message, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle replies during mapping setup process."""

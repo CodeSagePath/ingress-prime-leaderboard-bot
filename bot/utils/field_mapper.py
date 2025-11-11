@@ -120,7 +120,20 @@ class DataFieldMapper:
         """
         display_name = self.command_display_map.get(command_suffix)
         if display_name:
-            return self.display_field_map.get(display_name)
+            # Map display names to the JSON keys used by the leaderboard service
+            json_key_mapping = {
+                "Lifetime AP": None,  # Handled separately
+                "Hacks": "hacks",
+                "XM Collected": "xm_collected",
+                "Portals Captured": "portals_captured",
+                "Links Created": "links_created",
+                "Control Fields Created": "fields_created",
+                "Distance Walked": "distance_walked",
+                "Resonators Deployed": "resonators_deployed",
+                "Resonators Destroyed": "resonators_destroyed",
+                "+Beta Tokens": "betatokens"
+            }
+            return json_key_mapping.get(display_name)
         return None
 
     def get_display_name_for_command(self, command_suffix: str) -> Optional[str]:
