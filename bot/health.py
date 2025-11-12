@@ -178,8 +178,7 @@ class HealthChecker:
                 }
 
             # Test bot configuration by trying to initialize
-            from .main import build_application
-
+            
             # Don't actually start the bot, just test configuration
             status = "healthy"
             message = "Bot configuration valid"

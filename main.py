@@ -8,10 +8,8 @@ import asyncio
 import logging
 import os
 import sys
-import uvicorn
 from pathlib import Path
 from datetime import datetime, timezone 
-
 from bot.config import load_settings
 
 # Add the project root to Python path
