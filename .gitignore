@@ -13,6 +13,7 @@ logs/
 .marscode
 *.md
 !README.md
+data/
 
 # Misc. (Contains actual data statistics)
 helpers/
