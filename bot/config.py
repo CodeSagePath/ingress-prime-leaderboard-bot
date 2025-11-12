@@ -17,27 +17,27 @@ def _bool(value: str | None, default: bool) -> bool:
 @dataclass
 class ServerConfig:
     """Server-specific configuration settings."""
-    host: str = "0.0.0.0"
-    port: int = 8080
-    log_level: str = "INFO"
+    host: str
+    port: int
+    log_level: str
 
 
 @dataclass
 class DatabaseConfig:
     """Database configuration."""
-    url: str = "sqlite+aiosqlite:///./data/databases/bot.db"
-    pool_pre_ping: bool = True
+    url: str
+    pool_pre_ping: bool
 
 
 @dataclass
 class RedisConfig:
     """Redis configuration for server deployment."""
-    url: str = "redis://127.0.0.1:6379/0"
-    max_connections: int = 20
-    retry_on_timeout: bool = True
-    health_check_interval: int = 30
-    socket_timeout: int = 5
-    socket_connect_timeout: int = 5
+    url: str
+    max_connections: int
+    retry_on_timeout: bool
+    health_check_interval: int
+    socket_timeout: int
+    socket_connect_timeout: int
 
 
 @dataclass
@@ -49,84 +49,113 @@ class SecurityConfig:
 @dataclass
 class MonitoringConfig:
     """Monitoring and health check configuration."""
-    health_check_enabled: bool = True
-    log_to_file: bool = False
-    log_file_path: str = "./logs/app.log"
-    log_max_size: str = "100MB"
-    log_backup_count: int = 5
+    health_check_enabled: bool
+    log_to_file: bool
+    log_file_path: str
+    log_max_size: str
+    log_backup_count: int
 
 
 @dataclass
 class Settings:
     # Core bot settings
     telegram_token: str
-    bot_name: str = "Ingress Prime Leaderboard"
+    bot_name: str
 
     # Enhanced configurations
-    database: DatabaseConfig = field(default_factory=DatabaseConfig)
-    redis: RedisConfig = field(default_factory=RedisConfig)
-    server: ServerConfig = field(default_factory=ServerConfig)
-    security: SecurityConfig = field(default_factory=SecurityConfig)
-    monitoring: MonitoringConfig = field(default_factory=MonitoringConfig)
+    database: DatabaseConfig
+    redis: RedisConfig
+    server: ServerConfig
+    security: SecurityConfig
+    monitoring: MonitoringConfig
 
     # Existing settings
-    autodelete_delay_seconds: int = 300
-    autodelete_enabled: bool = True
-    leaderboard_size: int = 10
-    group_message_retention_minutes: int = 60
-    dashboard_enabled: bool = False
-    dashboard_host: str = "127.0.0.1"
-    dashboard_port: int = 8000
-    dashboard_admin_token: str = ""
-    text_only_mode: bool = False
-    admin_user_ids: list[int] = field(default_factory=list)
+    autodelete_delay_seconds: int
+    autodelete_enabled: bool
+    leaderboard_size: int
+    group_message_retention_minutes: int
+    dashboard_enabled: bool
+    dashboard_host: str
+    dashboard_port: int
+    dashboard_admin_token: str
+    text_only_mode: bool
+    admin_user_ids: list[int]
 
     # Environment-specific settings
-    environment: str = "production"
-    debug: bool = False
-    timezone: str = "UTC"
+    environment: str
+    debug: bool
+    timezone: str
 
     # Backup configuration
-    backup_enabled: bool = False
-    backup_rclone_remote: str = ""
-    backup_destination_path: str = "ingress-bot-backups"
-    backup_schedule: str = "daily"
-    backup_retention_count: int = 7
-    backup_compress: bool = True
+    backup_enabled: bool
+    backup_rclone_remote: str
+    backup_destination_path: str
+    backup_schedule: str
+    backup_retention_count: int
+    backup_compress: bool
 
     
 
 def load_settings() -> Settings:
-    # Core settings
-    telegram_token = os.environ.get("BOT_TOKEN", "")
-    bot_name = os.environ.get("BOT_NAME", "Ingress Prime Leaderboard")
+    # Load environment variables from .env file to ensure they're available
+    from pathlib import Path
+    from dotenv import load_dotenv
+
+    # Determine project root and load .env
+    project_root = Path(__file__).parent.parent
+    load_dotenv(project_root / ".env")
+
+    # Core settings - all required from environment
+    telegram_token = os.getenv("BOT_TOKEN")
+    if not telegram_token:
+        raise ValueError("BOT_TOKEN is required in environment variables")
+
+    bot_name = os.getenv("BOT_NAME", "Ingress Prime Leaderboard")
 
     # Environment detection
-    environment = os.environ.get("ENVIRONMENT", "production")
-    debug = _bool(os.environ.get("DEBUG"), environment == "development")
-    timezone = os.environ.get("TIMEZONE", "UTC")
+    environment = os.getenv("ENVIRONMENT", "production")
+    debug = _bool(os.getenv("DEBUG"), environment == "development")
+    timezone = os.getenv("TIMEZONE", "UTC")
 
-    # Database configuration
+    # Database configuration - all required from environment
+    database_url = os.getenv("DATABASE_URL")
+    if not database_url:
+        raise ValueError("DATABASE_URL is required in environment variables")
+
     database_config = DatabaseConfig(
-        url=os.environ.get("DATABASE_URL", "sqlite+aiosqlite:///./data/bot.db"),
-        pool_pre_ping=_bool(os.environ.get("DB_POOL_PRE_PING"), True),
+        url=database_url,
+        pool_pre_ping=_bool(os.getenv("DB_POOL_PRE_PING"), True),
     )
 
-    # Redis configuration
+    # Redis configuration - all required from environment
+    redis_url = os.getenv("REDIS_URL")
+    if not redis_url:
+        raise ValueError("REDIS_URL is required in environment variables")
+
     redis_config = RedisConfig(
-        url=os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/0"),
-        max_connections=int(os.environ.get("REDIS_MAX_CONNECTIONS", "20")),
-        retry_on_timeout=_bool(os.environ.get("REDIS_RETRY_ON_TIMEOUT"), True),
-        health_check_interval=int(os.environ.get("REDIS_HEALTH_CHECK_INTERVAL", "30")),
-        socket_timeout=int(os.environ.get("REDIS_SOCKET_TIMEOUT", "5")),
-        socket_connect_timeout=int(os.environ.get("REDIS_SOCKET_CONNECT_TIMEOUT", "5")),
+        url=redis_url,
+        max_connections=int(os.getenv("REDIS_MAX_CONNECTIONS", "20")),
+        retry_on_timeout=_bool(os.getenv("REDIS_RETRY_ON_TIMEOUT"), True),
+        health_check_interval=int(os.getenv("REDIS_HEALTH_CHECK_INTERVAL", "30")),
+        socket_timeout=int(os.getenv("REDIS_SOCKET_TIMEOUT", "5")),
+        socket_connect_timeout=int(os.getenv("REDIS_SOCKET_CONNECT_TIMEOUT", "5")),
     )
 
-    # Server configuration
+    # Server configuration - all required from environment
+    server_host = os.getenv("SERVER_HOST")
+    if not server_host:
+        raise ValueError("SERVER_HOST is required in environment variables")
+
+    server_port = os.getenv("SERVER_PORT")
+    if not server_port:
+        raise ValueError("SERVER_PORT is required in environment variables")
+
+    server_log_level = os.getenv("LOG_LEVEL", "INFO")
+
     server_config = ServerConfig(
-        host=os.environ.get("SERVER_HOST", "0.0.0.0"),
-        port=int(os.environ.get("SERVER_PORT", "8080")),
-        log_level=os.environ.get("LOG_LEVEL", "INFO"),
+        host=server_host,
+        port=int(server_port),
+        log_level=server_log_level,
     )
 
     # Security configuration
@@ -134,46 +163,48 @@ def load_settings() -> Settings:
 
     # Monitoring configuration
     monitoring_config = MonitoringConfig(
-        health_check_enabled=_bool(os.environ.get("HEALTH_CHECK_ENABLED"), True),
-        log_to_file=_bool(os.environ.get("LOG_TO_FILE"), environment == "production"),
-        log_file_path=os.environ.get("LOG_FILE_PATH", "./logs/app.log"),
-        log_max_size=os.environ.get("LOG_MAX_SIZE", "100MB"),
-        log_backup_count=int(os.environ.get("LOG_BACKUP_COUNT", "5")),
+        health_check_enabled=_bool(os.getenv("HEALTH_CHECK_ENABLED"), True),
+        log_to_file=_bool(os.getenv("LOG_TO_FILE"), environment == "production"),
+        log_file_path=os.getenv("LOG_FILE_PATH", "./logs/app.log"),
+        log_max_size=os.getenv("LOG_MAX_SIZE", "100MB"),
+        log_backup_count=int(os.getenv("LOG_BACKUP_COUNT", "5")),
     )
 
-    # Parse admin user IDs from environment variable
-    admin_ids_str = os.environ.get("ADMIN_USER_IDS", "")
-    admin_user_ids = []
-    if admin_ids_str:
-        try:
-            admin_user_ids = [int(id_str.strip()) for id_str in admin_ids_str.split(",") if id_str.strip()]
-        except ValueError:
-            logger.warning("Invalid ADMIN_USER_IDS format. Using empty list.")
+    # Parse admin user IDs from environment variable - required
+    admin_ids_str = os.getenv("ADMIN_USER_IDS")
+    if not admin_ids_str:
+        raise ValueError("ADMIN_USER_IDS is required in environment variables")
 
-    # Legacy settings
-    autodelete_delay_seconds = int(os.environ.get("AUTODELETE_DELAY_SECONDS", "300"))
-    autodelete_enabled = _bool(os.environ.get("AUTODELETE_ENABLED"), True)
-    leaderboard_size = int(os.environ.get("LEADERBOARD_SIZE", "10"))
-    group_message_retention_minutes = int(os.environ.get("GROUP_MESSAGE_RETENTION_MINUTES", "60"))
-    dashboard_enabled = _bool(os.environ.get("DASHBOARD_ENABLED"), False)
-    dashboard_host = os.environ.get("DASHBOARD_HOST", server_config.host)
-    dashboard_port = int(os.environ.get("DASHBOARD_PORT", "8000"))
-    dashboard_admin_token = os.environ.get("DASHBOARD_ADMIN_TOKEN", "")
-    text_only_mode = _bool(os.environ.get("TEXT_ONLY_MODE"), False)
+    admin_user_ids = []
+    try:
+        admin_user_ids = [int(id_str.strip()) for id_str in admin_ids_str.split(",") if id_str.strip()]
+    except ValueError:
+        logger.warning("Invalid ADMIN_USER_IDS format. Using empty list.")
+
+    # Legacy settings - get from environment
+    autodelete_delay_seconds = int(os.getenv("AUTODELETE_DELAY_SECONDS", "300"))
+    autodelete_enabled = _bool(os.getenv("AUTODELETE_ENABLED"), True)
+    leaderboard_size = int(os.getenv("LEADERBOARD_SIZE", "10"))
+    group_message_retention_minutes = int(os.getenv("GROUP_MESSAGE_RETENTION_MINUTES", "60"))
+    dashboard_enabled = _bool(os.getenv("DASHBOARD_ENABLED"), False)
+
+    # Dashboard configuration - get from environment
+    dashboard_host = os.getenv("DASHBOARD_HOST", server_config.host)
+    dashboard_port_str = os.getenv("DASHBOARD_PORT")
+    if not dashboard_port_str:
+        raise ValueError("DASHBOARD_PORT is required in environment variables")
+    dashboard_port = int(dashboard_port_str)
+
+    dashboard_admin_token = os.getenv("DASHBOARD_ADMIN_TOKEN", "")
+    text_only_mode = _bool(os.getenv("TEXT_ONLY_MODE"), False)
 
     # Backup configuration
-    backup_enabled = _bool(os.environ.get("BACKUP_ENABLED"), False)
-    backup_rclone_remote = os.environ.get("BACKUP_RCLONE_REMOTE", "")
-    backup_destination_path = os.environ.get("BACKUP_DESTINATION_PATH", "ingress-bot-backups")
-    backup_schedule = os.environ.get("BACKUP_SCHEDULE", "daily")
-    backup_retention_count = int(os.environ.get("BACKUP_RETENTION_COUNT", "7"))
-    backup_compress = _bool(os.environ.get("BACKUP_COMPRESS"), True)
-
-    
-    # Environment-specific adjustments
-    if environment == "development":
-        server_config.host = "127.0.0.1"
-        monitoring_config.log_to_file = False
+    backup_enabled = _bool(os.getenv("BACKUP_ENABLED"), False)
+    backup_rclone_remote = os.getenv("BACKUP_RCLONE_REMOTE", "")
+    backup_destination_path = os.getenv("BACKUP_DESTINATION_PATH", "ingress-bot-backups")
+    backup_schedule = os.getenv("BACKUP_SCHEDULE", "daily")
+    backup_retention_count = int(os.getenv("BACKUP_RETENTION_COUNT", "7"))
+    backup_compress = _bool(os.getenv("BACKUP_COMPRESS"), True)
 
     return Settings(
         telegram_token=telegram_token,

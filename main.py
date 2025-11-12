@@ -18,7 +18,7 @@ sys.path.insert(0, str(project_root))
 
 # Load environment variables from .env file
 from dotenv import load_dotenv
-load_dotenv(project_root / "config" / ".env")
+load_dotenv(project_root / ".env")
 
 # Dictionary to track bot messages for auto-deletion
 bot_messages = {}  # {message_id: (timestamp, chat_id)}
@@ -35,7 +35,7 @@ def start_dashboard_process():
         # Load environment variables from .env file
         from dotenv import load_dotenv
         project_root = Path(__file__).parent
-        load_dotenv(project_root / "config" / ".env")
+        load_dotenv(project_root / ".env")
 
         from bot.config import load_settings
         settings = load_settings()
@@ -187,8 +187,8 @@ def run_dashboard_server_sync(dashboard_app, settings):
     import os
 
     # Get configuration from environment variables as fallback
-    host = getattr(settings, 'dashboard_host', None) or os.getenv("DASHBOARD_HOST", "0.0.0.0")
-    port = getattr(settings, 'dashboard_port', None) or int(os.getenv("DASHBOARD_PORT", "8000"))
+    host = getattr(settings, 'dashboard_host', None) or os.getenv("DASHBOARD_HOST")
+    port = getattr(settings, 'dashboard_port', None) or int(os.getenv("DASHBOARD_PORT"))
 
     try:
         uvicorn.run(

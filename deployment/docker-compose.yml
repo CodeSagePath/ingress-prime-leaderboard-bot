@@ -28,13 +28,13 @@ services:
       - DB_POOL_PRE_PING=${DB_POOL_PRE_PING:-true}
 
       # Redis Configuration
-      - REDIS_URL=redis://redis:6379/0
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
       - REDIS_MAX_CONNECTIONS=${REDIS_MAX_CONNECTIONS:-20}
       - REDIS_RETRY_ON_TIMEOUT=${REDIS_RETRY_ON_TIMEOUT:-true}
       - REDIS_HEALTH_CHECK_INTERVAL=${REDIS_HEALTH_CHECK_INTERVAL:-30}
 
       # Server Configuration
-      - SERVER_HOST=0.0.0.0
+      - SERVER_HOST=${SERVER_HOST:-0.0.0.0}
       - SERVER_PORT=${SERVER_PORT:-8080}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - MAX_CONNECTIONS=${MAX_CONNECTIONS:-1000}
@@ -53,7 +53,7 @@ services:
 
       # Dashboard Configuration
       - DASHBOARD_ENABLED=${DASHBOARD_ENABLED:-true}
-      - DASHBOARD_HOST=0.0.0.0
+      - DASHBOARD_HOST=${DASHBOARD_HOST:-0.0.0.0}
       - DASHBOARD_PORT=${DASHBOARD_PORT:-8000}
       - DASHBOARD_ADMIN_TOKEN=${DASHBOARD_ADMIN_TOKEN}
 
