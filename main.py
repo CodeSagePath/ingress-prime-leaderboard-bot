@@ -47,12 +47,36 @@ def start_dashboard_process():
         import asyncio
 
         def run_dashboard():
-            from bot.dashboard import start_dashboard_server, run_dashboard_server_sync
-            dashboard_app, _ = start_dashboard_server(settings)
-            if dashboard_app:
-                run_dashboard_server_sync(dashboard_app, settings)
-            else:
-                print("❌ Failed to initialize dashboard")
+            from bot.dashboard import create_dashboard_app
+            from bot.database import build_engine, init_models
+            import asyncio
+            import uvicorn
+
+            engine = build_engine(settings)
+
+            # Create a new event loop for this process
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+            async def init_and_run():
+                await init_models(engine)
+                from bot.database import build_session_factory
+                session_factory = build_session_factory(engine)
+                dashboard_app = create_dashboard_app(settings, session_factory)
+                if dashboard_app:
+                    print(f"🌐 Dashboard server starting on http://{settings.dashboard_host}:{settings.dashboard_port}")
+                    config = uvicorn.Config(
+                        dashboard_app,
+                        host=settings.dashboard_host,
+                        port=settings.dashboard_port,
+                        log_level="warning"
+                    )
+                    server = uvicorn.Server(config)
+                    await server.serve()
+                else:
+                    print("❌ Failed to initialize dashboard")
+
+            loop.run_until_complete(init_and_run())
 
         run_dashboard()
     except Exception as e:

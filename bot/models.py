@@ -7,10 +7,10 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .database import Base
 
 
-class VerificationStatus(str, Enum):
-    pending = "pending"
-    approved = "approved"
-    rejected = "rejected"
+# class VerificationStatus(str, Enum):
+#     pending = "pending"
+#     approved = "approved"
+#     rejected = "rejected"
 
 
 class Faction(str, Enum):
@@ -53,7 +53,7 @@ class Submission(Base):
     submitted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     agent: Mapped[Agent] = relationship(back_populates="submissions")
-    verification: Mapped["Verification"] = relationship(back_populates="submission", uselist=False, cascade="all, delete-orphan")
+    # verification: Mapped["Verification"] = relationship(back_populates="submission", uselist=False, cascade="all, delete-orphan")
     
     # Add composite indexes for better performance on old Android devices
     __table_args__ = (
@@ -127,20 +127,20 @@ class PendingAction(Base):
     )
 
 
-class Verification(Base):
-    __tablename__ = "verifications"
+# class Verification(Base):
+#     __tablename__ = "verifications"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    submission_id: Mapped[int] = mapped_column(ForeignKey("submissions.id", ondelete="CASCADE"), nullable=False, index=True)
-    status: Mapped[str] = mapped_column(String(16), nullable=False, default=VerificationStatus.pending.value)
+#     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+#     submission_id: Mapped[int] = mapped_column(ForeignKey("submissions.id", ondelete="CASCADE"), nullable=False, index=True)
+#     status: Mapped[str] = mapped_column(String(16), nullable=False, default=VerificationStatus.pending.value)
 
-    submission: Mapped["Submission"] = relationship(back_populates="verification")
+#     submission: Mapped["Submission"] = relationship(back_populates="verification")
 
-    __table_args__ = (
-        CheckConstraint("status IN ('pending','approved','rejected')", name="verification_status_check"),
-        # Add composite indexes for better performance on old Android devices
-        Index('idx_verification_submission', 'submission_id'),
-    )
+#     __table_args__ = (
+#         CheckConstraint("status IN ('pending','approved','rejected')", name="verification_status_check"),
+#         # Add composite indexes for better performance on old Android devices
+#         Index('idx_verification_submission', 'submission_id'),
+#     )
 
 
 class UserSetting(Base):

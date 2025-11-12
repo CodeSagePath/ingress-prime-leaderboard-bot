@@ -5,7 +5,7 @@ import logging
 from sqlalchemy import func, select, case, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import Agent, Submission, Verification, VerificationStatus
+from .models import Agent, Submission
 
 logger = logging.getLogger(__name__)
 
