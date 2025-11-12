@@ -11,6 +11,8 @@ __pycache__/
 *.log
 .claude
 .marscode
+*.md
+!README.md
 
 # Misc. (Contains actual data statistics)
 helpers/

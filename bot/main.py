@@ -38,6 +38,7 @@ from .models import Agent, GroupMessage, GroupPrivacyMode, GroupSetting, Pending
 from .services.leaderboard import get_leaderboard
 from .utils.beta_tokens import get_token_status_message, update_medal_requirements, update_task_name, get_medal_config
 from .utils.data_mapping import get_mapping_manager
+from .utils.primestats_formatter import format_primestats_efficient
 
 logger = logging.getLogger(__name__)
 
@@ -2618,6 +2619,7 @@ def configure_handlers(application: Application) -> None:
     application.add_handler(CommandHandler("lastcycle", last_cycle_command))
     application.add_handler(CommandHandler("lastweek", last_week_command))
     application.add_handler(CommandHandler("myrank", myrank_command))
+    application.add_handler(CommandHandler("myprofile", myprofile_command))
     application.add_handler(CommandHandler("setmapping", set_mapping_command))
     application.add_handler(CommandHandler("listmappings", list_mappings_command))
     application.add_handler(CommandHandler("testmapping", test_mapping_command))
@@ -2718,6 +2720,9 @@ async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     metric = "ap"  # default metric
     limit = 10
 
+    # Import the efficient leaderboard service for smart defaults
+    from .services.leaderboard import get_optimal_metric_for_timeframe
+
     # Import field mapper for dynamic metric mapping
     from .utils.field_mapper import get_field_mapper
     field_mapper = get_field_mapper()
@@ -2725,7 +2730,7 @@ async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     # Parse arguments
     for arg in args:
         arg_lower = arg.lower()
-        if arg_lower in ["all", "all time", "lifetime"]:
+        if arg_lower in ["all", "all time", "lifetime", "alltime"]:
             time_span = "ALL TIME"
         elif arg_lower in ["weekly", "week"]:
             time_span = "WEEKLY"
@@ -2745,16 +2750,8 @@ async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             if field_name is not None:
                 # Use the JSON key directly as the metric name
                 metric = field_name
-            else:
-                # Fallback for combined format like "weekly hacks"
-                if arg_lower in ["weekly", "week"]:
-                    time_span = "WEEKLY"
-                elif arg_lower in ["monthly", "month"]:
-                    time_span = "MONTHLY"
-                elif arg_lower in ["all", "all time", "lifetime"]:
-                    time_span = "ALL TIME"
 
-    # Default to weekly if no time span specified for certain metrics
+    # Default to weekly if no time span specified for non-AP metrics
     if time_span is None and metric != "ap":
         time_span = "WEEKLY"
 
@@ -2780,7 +2777,11 @@ async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     try:
         # Use the comprehensive leaderboard service
-        chat_id = update.effective_chat.id if update.effective_chat else None
+        # For consistency, use global scope (chat_id=None) for private chats,
+        # but chat-specific scope for group chats
+        chat_id = None
+        if update.effective_chat and update.effective_chat.type != "private":
+            chat_id = update.effective_chat.id
 
         async with session_scope(session_factory) as session:
             rows = await get_leaderboard(
@@ -2867,14 +2868,132 @@ async def myrank_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await update.message.reply_text("You haven't submitted any stats yet. Use /submit to get started.")
             return
 
+    # Parse command arguments to match /leaderboard behavior
+    args = context.args if context.args else []
+    time_span = None
+    metric = "ap"  # default metric
+
+    # Import field mapper for consistent metric parsing
+    from .utils.field_mapper import get_field_mapper
+    field_mapper = get_field_mapper()
+
+    # Parse arguments similar to /leaderboard
+    for arg in args:
+        arg_lower = arg.lower()
+        if arg_lower in ["all", "all time", "lifetime", "alltime"]:
+            time_span = "ALL TIME"
+        elif arg_lower in ["weekly", "week"]:
+            time_span = "WEEKLY"
+        elif arg_lower in ["monthly", "month"]:
+            time_span = "MONTHLY"
+        elif arg_lower in ["daily", "day"]:
+            time_span = "DAILY"
+        elif arg_lower in ["beta", "betatokens"]:
+            metric = "betatokens"
+        else:
+            # Try to find metric using field mapper
+            field_name = field_mapper.get_field_for_command(arg_lower)
+            if field_name is not None:
+                metric = field_name
+
+    # Default to weekly if no time span specified for non-AP metrics
+    if time_span is None and metric != "ap":
+        time_span = "WEEKLY"
+
     # Get agent's rank using the same logic as /leaderboard
-    chat_id = update.effective_chat.id if update.effective_chat else None
-    rank = await get_agent_rank(session_factory, agent.id, chat_id=chat_id)
+    # For consistency with default /leaderboard behavior, use global scope (chat_id=None)
+    # unless explicitly in a group chat where chat-specific rankings make sense
+    chat_id = None
+    if update.effective_chat and update.effective_chat.type != "private":
+        chat_id = update.effective_chat.id
+
+    rank = await get_agent_rank(session_factory, agent.id, chat_id=chat_id, time_span=time_span, metric=metric)
 
     if rank:
-        await update.message.reply_text(f"Your current rank: #{rank}")
+        # Format the response with metric info
+        if metric == "ap" and not time_span:
+            await update.message.reply_text(f"Your current rank: #{rank}")
+        else:
+            metric_display = field_mapper.get_display_name_for_command(metric) or metric.replace("_", " ").title()
+            time_span_text = time_span if time_span else "ALL TIME"
+            await update.message.reply_text(f"Your rank for {metric_display} ({time_span_text}): #{rank}")
     else:
         await update.message.reply_text("You haven't submitted any stats yet. Use /submit to get started.")
+
+
+async def myprofile_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /myprofile command - show user's detailed stats using efficient filtering."""
+    if not update.message or not update.effective_user:
+        return
+
+    session_factory = context.application.bot_data["session_factory"]
+
+    try:
+        async with session_scope(session_factory) as session:
+            # Get agent's details
+            result = await session.execute(
+                select(Agent).where(Agent.telegram_id == update.effective_user.id)
+            )
+            agent = result.scalar_one_or_none()
+
+            if not agent:
+                await update.message.reply_text(
+                    "You haven't submitted any stats yet. Use /submit to get started.\n\n"
+                    "📊 *About Profile Display*\n"
+                    "Only shows meaningful and interesting stats:\n"
+                    "• Core stats (level, AP)\n"
+                    "• Achievement-based stats (>0 only)\n"
+                    "• Notable achievements (significant values only)\n"
+                    "• Cycle info (if available)"
+                )
+                return
+
+            # Get agent's most recent submission with detailed stats
+            submission_result = await session.execute(
+                select(Submission)
+                .where(Submission.agent_id == agent.id)
+                .order_by(Submission.submitted_at.desc())
+                .limit(1)
+            )
+            latest_submission = submission_result.scalar_one_or_none()
+
+            if not latest_submission or not latest_submission.metrics:
+                await update.message.reply_text(
+                    "No detailed stats found. Submit your Ingress stats to see your profile."
+                )
+                return
+
+            # Parse the metrics from JSON and format efficiently
+            try:
+                import json
+                stats_data = json.loads(latest_submission.metrics) if isinstance(latest_submission.metrics, str) else latest_submission.metrics
+
+                # Add agent-specific info that might not be in the metrics
+                stats_data["agent_name"] = agent.codename
+                stats_data["agent_faction"] = agent.faction
+
+                # Format using the efficient formatter
+                formatted_stats = format_primestats_efficient(stats_data)
+
+                # Send the formatted profile
+                await update.message.reply_text(
+                    f"📊 *Your Agent Profile*\n\n```\n{formatted_stats}\n```\n\n"
+                    f"📅 Last updated: {latest_submission.submitted_at.strftime('%Y-%m-%d %H:%M')}\n"
+                    f"🔄 Submit new stats anytime with /submit",
+                    parse_mode="Markdown"
+                )
+
+            except (json.JSONDecodeError, TypeError, KeyError) as e:
+                logger.error(f"Error parsing stats for agent {agent.codename}: {e}")
+                await update.message.reply_text(
+                    "Error formatting your stats. Please submit again or contact admin."
+                )
+
+    except Exception as e:
+        logger.error(f"Error in myprofile_command: {e}")
+        await update.message.reply_text(
+            "An error occurred while fetching your profile. Please try again later."
+        )
 
 
 async def debug_data_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

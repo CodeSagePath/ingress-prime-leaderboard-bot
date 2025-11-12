@@ -10,20 +10,212 @@ from ..models import Agent, Submission, Verification, VerificationStatus
 logger = logging.getLogger(__name__)
 
 # Define metric configurations for different leaderboard types
+# Priority is based on stat availability and ranking value
 METRIC_CONFIGS = {
-    "ap": {"field": "ap", "json_key": None, "default": 0},
-    "hacks": {"field": "metrics", "json_key": "hacks", "default": 0},
-    "xm_collected": {"field": "metrics", "json_key": "xm_collected", "default": 0},
-    "portals_captured": {"field": "metrics", "json_key": "portals_captured", "default": 0},
-    "resonators_deployed": {"field": "metrics", "json_key": "resonators_deployed", "default": 0},
-    "links_created": {"field": "metrics", "json_key": "links_created", "default": 0},
-    "fields_created": {"field": "metrics", "json_key": "fields_created", "default": 0},
-    "mods_deployed": {"field": "metrics", "json_key": "mods_deployed", "default": 0},
-    "resonators_destroyed": {"field": "metrics", "json_key": "resonators_destroyed", "default": 0},
-    "portals_neutralized": {"field": "metrics", "json_key": "portals_neutralized", "default": 0},
-    "distance_walked": {"field": "metrics", "json_key": "distance_walked", "default": 0},
-    "betatokens": {"field": "metrics", "json_key": "betatokens", "default": 0},
+    # Tier 1: Core Performance Stats (Highest Priority)
+    "ap": {
+        "field": "ap",
+        "json_key": None,
+        "default": 0,
+        "priority": 1,
+        "availability": 1.0,  # Always available
+        "category": "core",
+        "description": "Lifetime AP - Universal ranking standard"
+    },
+    "hacks": {
+        "field": "metrics",
+        "json_key": "hacks",
+        "default": 0,
+        "priority": 2,
+        "availability": 0.98,  # Very common across agents
+        "category": "core",
+        "description": "Total hacks - High-frequency activity metric"
+    },
+    "xm_collected": {
+        "field": "metrics",
+        "json_key": "xm_collected",
+        "default": 0,
+        "priority": 3,
+        "availability": 0.95,  # Most agents have this
+        "category": "core",
+        "description": "XM collected - Activity volume indicator"
+    },
+
+    # Tier 2: Strategic Building Stats (High Value)
+    "links_created": {
+        "field": "metrics",
+        "json_key": "links_created",
+        "default": 0,
+        "priority": 4,
+        "availability": 0.85,  # Common for established agents
+        "category": "building",
+        "description": "Links created - Network building metric"
+    },
+    "control_fields_created": {
+        "field": "metrics",
+        "json_key": "control_fields_created",
+        "default": 0,
+        "priority": 5,
+        "availability": 0.75,  # Available for active builders
+        "category": "building",
+        "description": "Control fields created - Strategic contribution"
+    },
+
+    # Tier 3: Combat & Activity Stats (Medium Value)
+    "portals_captured": {
+        "field": "metrics",
+        "json_key": "portals_captured",
+        "default": 0,
+        "priority": 6,
+        "availability": 0.80,  # Common for active players
+        "category": "combat",
+        "description": "Portals captured - Territory control metric"
+    },
+    "resonators_deployed": {
+        "field": "metrics",
+        "json_key": "resonators_deployed",
+        "default": 0,
+        "priority": 7,
+        "availability": 0.82,  # Very common activity
+        "category": "building",
+        "description": "Resonators deployed - Basic building activity"
+    },
+    "resonators_destroyed": {
+        "field": "metrics",
+        "json_key": "resonators_destroyed",
+        "default": 0,
+        "priority": 8,
+        "availability": 0.70,  # Combat-focused agents
+        "category": "combat",
+        "description": "Resonators destroyed - Combat activity"
+    },
+    "portals_neutralized": {
+        "field": "metrics",
+        "json_key": "portals_neutralized",
+        "default": 0,
+        "priority": 9,
+        "availability": 0.75,  # Combat and cleansing activity
+        "category": "combat",
+        "description": "Portals neutralized - Combat activity"
+    },
+
+    # Tier 4: Specialized Stats (Lower Priority)
+    "distance_walked": {
+        "field": "metrics",
+        "json_key": "distance_walked",
+        "default": 0,
+        "priority": 10,
+        "availability": 0.80,  # Physical engagement metric
+        "category": "exploration",
+        "description": "Distance walked - Physical activity"
+    },
+    "mods_deployed": {
+        "field": "metrics",
+        "json_key": "mods_deployed",
+        "default": 0,
+        "priority": 11,
+        "availability": 0.85,  # Common for strategic players
+        "category": "building",
+        "description": "Mods deployed - Strategic enhancement"
+    },
+    "betatokens": {
+        "field": "metrics",
+        "json_key": "betatokens",
+        "default": 0,
+        "priority": 12,
+        "availability": 0.60,  # Event-specific, less common
+        "category": "events",
+        "description": "Beta tokens - Event participation"
+    },
 }
+
+
+def get_core_metrics(limit: int = 4) -> Dict[str, Dict[str, Any]]:
+    """
+    Get the most efficient core metrics for default leaderboards.
+    Returns metrics with highest availability and ranking value.
+    """
+    core_metrics = {}
+    for metric_key, config in METRIC_CONFIGS.items():
+        if config["priority"] <= limit:
+            core_metrics[metric_key] = config
+    return core_metrics
+
+
+def get_metrics_by_category(category: str) -> Dict[str, Dict[str, Any]]:
+    """Get all metrics in a specific category."""
+    return {
+        metric_key: config
+        for metric_key, config in METRIC_CONFIGS.items()
+        if config["category"] == category
+    }
+
+
+def get_high_availability_metrics(min_availability: float = 0.85) -> Dict[str, Dict[str, Any]]:
+    """Get metrics with high availability across agents."""
+    return {
+        metric_key: config
+        for metric_key, config in METRIC_CONFIGS.items()
+        if config["availability"] >= min_availability
+    }
+
+
+def get_optimal_metric_for_timeframe(timeframe_type: str) -> str:
+    """
+    Get the optimal metric for different timeframes.
+
+    Args:
+        timeframe_type: "daily", "weekly", "monthly", "alltime"
+
+    Returns:
+        Metric key optimal for the timeframe
+    """
+    timeframe_recommendations = {
+        "daily": "hacks",        # High-frequency activity
+        "weekly": "xm_collected", # Activity volume
+        "monthly": "links_created", # Strategic building
+        "alltime": "ap"          # Universal standard
+    }
+    return timeframe_recommendations.get(timeframe_type, "ap")
+
+
+def get_metric_efficiency_score(metric_key: str) -> float:
+    """
+    Calculate efficiency score for a metric based on availability and priority.
+    Higher score = more efficient for ranking.
+
+    Args:
+        metric_key: The metric configuration key
+
+    Returns:
+        Efficiency score (0-100)
+    """
+    if metric_key not in METRIC_CONFIGS:
+        return 0.0
+
+    config = METRIC_CONFIGS[metric_key]
+    availability_score = config["availability"] * 50  # 50% weight
+    priority_score = max(0, (13 - config["priority"]) * 4)  # 50% weight
+
+    return availability_score + priority_score
+
+
+def get_recommended_metrics_for_leaderboard(count: int = 5) -> list[str]:
+    """
+    Get recommended metrics sorted by efficiency for leaderboard display.
+
+    Args:
+        count: Number of metrics to return
+
+    Returns:
+        List of metric keys sorted by efficiency
+    """
+    sorted_metrics = sorted(
+        METRIC_CONFIGS.items(),
+        key=lambda x: get_metric_efficiency_score(x[0]),
+        reverse=True
+    )
+    return [metric_key for metric_key, _ in sorted_metrics[:count]]
 
 
 async def get_leaderboard(

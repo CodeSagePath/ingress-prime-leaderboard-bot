@@ -127,7 +127,7 @@ class DataFieldMapper:
                 "XM Collected": "xm_collected",
                 "Portals Captured": "portals_captured",
                 "Links Created": "links_created",
-                "Control Fields Created": "fields_created",
+                "Control Fields Created": "control_fields_created",
                 "Distance Walked": "distance_walked",
                 "Resonators Deployed": "resonators_deployed",
                 "Resonators Destroyed": "resonators_destroyed",
