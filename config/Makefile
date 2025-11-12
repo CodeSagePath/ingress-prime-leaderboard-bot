@@ -12,7 +12,7 @@ dev:
 
 # Running
 run:
-	python main.py
+	python server.py
 
 
 # Testing

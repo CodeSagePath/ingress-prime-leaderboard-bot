@@ -1,6 +1,67 @@
 # Ingress Prime Leaderboard Bot
 
-A comprehensive Telegram bot for Ingress Prime players that tracks AP (Access Points), multiple metrics, provides competitive leaderboards with flexible submission formats, and includes integrated dashboard for web-based monitoring.
+A comprehensive Telegram bot for tracking Ingress Prime player statistics and leaderboards with integrated web dashboard.
+
+## 🚀 Quick Start
+
+```bash
+# Start the bot
+./start.sh start
+
+# Check status
+./start.sh status
+
+# View logs
+./start.sh logs
+
+# Stop the bot
+./start.sh stop
+```
+
+## 📁 Project Structure
+
+```
+ingress_leaderboard/
+├── server.py              # Main entry point (unified bot + dashboard)
+├── start.sh               # Startup script
+├── config/                # Configuration files
+│   ├── .env              # Environment variables
+│   ├── .gitignore        # Git ignore rules
+│   └── Makefile          # Development tasks
+├── bot/                   # Core application
+│   ├── app.py            # Main bot application
+│   ├── config.py         # Configuration management
+│   ├── database.py       # Database utilities
+│   ├── dashboard.py      # Web dashboard
+│   ├── models.py         # Data models
+│   ├── health.py         # Health checking
+│   ├── leaderboard.py    # Leaderboard service
+│   ├── jobs/             # Background jobs
+│   │   ├── backup.py     # Backup functionality
+│   │   ├── deletion.py   # Message cleanup
+│   │   └── leaderboard_worker.py  # Leaderboard worker
+│   └── utils/            # Utility modules
+│       ├── beta_tokens.py      # Beta tokens management
+│       ├── data_mapping.py     # Data mapping utilities
+│       ├── field_mapper.py     # Field mapping logic
+│       └── primestats_formatter.py  # Stats formatting
+├── data/                  # Application data
+│   ├── databases/         # Database files
+│   │   ├── bot.db        # Main database
+│   │   └── agents.db     # Agents database
+│   └── config/           # Configuration data
+│       ├── beta_tokens.json
+│       ├── beta_tokens_config.json
+│       └── current_cycle.txt
+├── logs/                  # Application logs
+│   └── archive/          # Archived logs
+├── deployment/            # Deployment files
+│   ├── Dockerfile
+│   └── docker-compose.yml
+├── tests/                 # Test files
+├── requirements.txt       # Python dependencies
+└── README.md             # This file
+```
 
 ## Table of Contents
 - [Project Description](#project-description)

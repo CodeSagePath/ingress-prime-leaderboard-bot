@@ -25,7 +25,7 @@ class ServerConfig:
 @dataclass
 class DatabaseConfig:
     """Database configuration."""
-    url: str = "sqlite+aiosqlite:///./data/bot.db"
+    url: str = "sqlite+aiosqlite:///./data/databases/bot.db"
     pool_pre_ping: bool = True
 
 

@@ -74,7 +74,7 @@ start_bot() {
 
     # Activate virtual environment and start unified bot
     source "$VENV_PATH/bin/activate"
-    nohup python main.py > bot.log 2>&1 &
+    nohup python server.py > bot.log 2>&1 &
     PID=$!
 
     # Wait a moment to see if it starts successfully

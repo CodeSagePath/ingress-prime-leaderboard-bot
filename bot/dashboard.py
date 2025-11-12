@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from .config import Settings
 from .database import session_scope
 from .models import GroupPrivacyMode, GroupSetting
-from .services.leaderboard import get_leaderboard
+from .leaderboard import get_leaderboard
 
 
 def start_dashboard_server(settings: Settings):

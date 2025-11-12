@@ -1,0 +1,26 @@
+2025-11-11 23:47:45,739 - bot.main - INFO - Starting Ingress Prime Leaderboard in production mode
+2025-11-11 23:47:45,751 - bot.main - INFO - Database connection successful
+2025-11-11 23:47:45,752 - bot.main - WARNING - Redis connection failed: Error 111 connecting to 127.0.0.1:6379. Connection refused.
+2025-11-11 23:47:45,781 - apscheduler.scheduler - INFO - Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2025-11-11 23:47:46,785 - bot.health - ERROR - Redis health check failed: Error 111 connecting to 127.0.0.1:6379. Connection refused.
+2025-11-11 23:47:47,545 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot8446582877:AAFHbmCEojAXxSMeoDIWS03pW6EpEUTpOxM/getMe "HTTP/1.1 200 OK"
+2025-11-11 23:47:47,546 - apscheduler.scheduler - INFO - Scheduler started
+2025-11-11 23:47:47,546 - telegram.ext.Application - INFO - Application started
+2025-11-11 23:47:47,699 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot8446582877:AAFHbmCEojAXxSMeoDIWS03pW6EpEUTpOxM/deleteWebhook "HTTP/1.1 200 OK"
+2025-11-11 23:47:47,701 - apscheduler.scheduler - INFO - Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2025-11-11 23:47:47,701 - apscheduler.scheduler - INFO - Added job "cleanup_expired_group_messages" to job store "default"
+2025-11-11 23:47:47,702 - apscheduler.scheduler - INFO - Added job "async_main.<locals>.<lambda>" to job store "default"
+2025-11-11 23:47:47,702 - apscheduler.scheduler - INFO - Scheduler started
+2025-11-11 23:51:23,807 - bot.main - INFO - Starting Ingress Prime Leaderboard in production mode
+2025-11-11 23:51:23,821 - bot.main - INFO - Database connection successful
+2025-11-11 23:51:23,822 - bot.main - WARNING - Redis connection failed: Error 111 connecting to 127.0.0.1:6379. Connection refused.
+2025-11-11 23:51:23,850 - apscheduler.scheduler - INFO - Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2025-11-11 23:51:24,854 - bot.health - ERROR - Redis health check failed: Error 111 connecting to 127.0.0.1:6379. Connection refused.
+2025-11-11 23:51:25,584 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot8446582877:AAFHbmCEojAXxSMeoDIWS03pW6EpEUTpOxM/getMe "HTTP/1.1 200 OK"
+2025-11-11 23:51:25,585 - apscheduler.scheduler - INFO - Scheduler started
+2025-11-11 23:51:25,586 - telegram.ext.Application - INFO - Application started
+2025-11-11 23:51:25,737 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot8446582877:AAFHbmCEojAXxSMeoDIWS03pW6EpEUTpOxM/deleteWebhook "HTTP/1.1 200 OK"
+2025-11-11 23:51:25,738 - apscheduler.scheduler - INFO - Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2025-11-11 23:51:25,738 - apscheduler.scheduler - INFO - Added job "cleanup_expired_group_messages" to job store "default"
+2025-11-11 23:51:25,739 - apscheduler.scheduler - INFO - Added job "async_main.<locals>.<lambda>" to job store "default"
+2025-11-11 23:51:25,739 - apscheduler.scheduler - INFO - Scheduler started

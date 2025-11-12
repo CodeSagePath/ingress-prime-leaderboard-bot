@@ -20,7 +20,7 @@ sys.path.insert(0, str(project_root))
 
 # Load environment variables from .env file
 from dotenv import load_dotenv
-load_dotenv(project_root / ".env")
+load_dotenv(project_root / "config" / ".env")
 
 # Dictionary to track bot messages for auto-deletion
 bot_messages = {}  # {message_id: (timestamp, chat_id)}
@@ -37,7 +37,7 @@ def start_dashboard_process():
         # Load environment variables from .env file
         from dotenv import load_dotenv
         project_root = Path(__file__).parent
-        load_dotenv(project_root / ".env")
+        load_dotenv(project_root / "config" / ".env")
 
         from bot.config import load_settings
         settings = load_settings()
@@ -70,7 +70,7 @@ def start_bot_process(bot_settings):
         global bot_message_cleanup_minutes
         bot_message_cleanup_minutes = bot_settings['bot_message_cleanup_minutes']
 
-        from bot.main import main
+        from bot.app import main
         asyncio.run(main())
     except Exception as e:
         print(f"❌ Bot error: {e}")
@@ -185,7 +185,7 @@ async def main():
 
     try:
         # Import bot modules
-        from bot.main import build_application
+        from bot.app import build_application
         from bot.database import build_session_factory
 
         # Build the bot application

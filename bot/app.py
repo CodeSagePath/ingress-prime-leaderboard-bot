@@ -35,7 +35,7 @@ from .health import get_health_checker
 from .jobs.deletion import cleanup_expired_group_messages, schedule_message_deletion
 from .jobs.backup import perform_backup, manual_backup_command
 from .models import Agent, GroupMessage, GroupPrivacyMode, GroupSetting, PendingAction, Submission, WeeklyStat, UserSetting
-from .services.leaderboard import get_leaderboard
+from .leaderboard import get_leaderboard
 from .utils.beta_tokens import get_token_status_message, update_medal_requirements, update_task_name, get_medal_config
 from .utils.data_mapping import get_mapping_manager
 from .utils.primestats_formatter import format_primestats_efficient
@@ -99,7 +99,7 @@ async def get_agent_rank(session_factory, agent_id: int, chat_id: int | None = N
     """Get the current rank of an agent using the same logic as the leaderboard."""
     try:
         # Import the leaderboard service for consistent ranking
-        from .services.leaderboard import get_leaderboard
+        from .leaderboard import get_leaderboard
 
         # Get the full leaderboard data with the same parameters as /leaderboard
         async with session_scope(session_factory) as session:
@@ -2721,7 +2721,7 @@ async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     limit = 10
 
     # Import the efficient leaderboard service for smart defaults
-    from .services.leaderboard import get_optimal_metric_for_timeframe
+    from .leaderboard import get_optimal_metric_for_timeframe
 
     # Import field mapper for dynamic metric mapping
     from .utils.field_mapper import get_field_mapper
