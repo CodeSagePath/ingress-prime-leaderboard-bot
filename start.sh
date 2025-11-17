@@ -3,7 +3,7 @@
 # This script manages the unified bot with integrated dashboard
 # Ensures only one bot instance is running with proper process management
 
-BOT_DIR="/home/codesagepath/Documents/TGBot/ingress_leaderboard"
+BOT_DIR="./"
 VENV_PATH="$BOT_DIR/venv"
 PIDFILE="$BOT_DIR/bot.pid"
 
