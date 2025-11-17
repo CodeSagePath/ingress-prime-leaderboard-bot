@@ -31,7 +31,7 @@ class HealthChecker:
     async def check_database(self) -> Dict[str, Any]:
         """Check database connectivity and performance."""
         try:
-            engine = build_engine(self.settings)
+            engine = await build_engine(self.settings)
             session_factory = build_session_factory(engine)
 
             start_time = time.time()
@@ -204,7 +204,7 @@ class HealthChecker:
     async def get_statistics(self) -> Dict[str, Any]:
         """Get basic bot statistics."""
         try:
-            engine = build_engine(self.settings)
+            engine = await build_engine(self.settings)
             session_factory = build_session_factory(engine)
 
             async with session_factory() as session:

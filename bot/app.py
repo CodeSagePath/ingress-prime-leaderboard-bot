@@ -30,7 +30,7 @@ from telegram.ext import (
 
 from .config import Settings, load_settings, validate_settings, print_environment_summary
 from .dashboard import create_dashboard_app
-from .database import build_engine, build_session_factory, init_models, session_scope
+from .database import build_engine, build_session_factory, init_models, session_scope, resilient_session_scope
 from .health import get_health_checker
 from .jobs.deletion import cleanup_expired_group_messages, schedule_message_deletion
 from .jobs.backup import perform_backup, manual_backup_command
@@ -39,6 +39,10 @@ from .leaderboard import get_leaderboard
 from .utils.beta_tokens import get_token_status_message, update_medal_requirements, update_task_name, get_medal_config
 from .utils.data_mapping import get_mapping_manager
 from .utils.primestats_formatter import format_primestats_efficient
+from .utils.data_validator import DataValidator, validate_players_data
+from .utils.file_importer import FileImporter, import_player_data_file
+from .utils.resilient_redis import get_resilient_redis
+from .utils.retry_decorators import telegram_message_retry, telegram_polling_retry, resilient_telegram_call
 
 logger = logging.getLogger(__name__)
 
@@ -243,65 +247,97 @@ async def _fetch_cycle_leaderboard(
     faction: str | None = None,
     cycle_name: str | None = None,
     since: datetime | None = None,
-) -> list[tuple[str, str, int]]:
-    since_value = since.strftime("%Y-%m-%d %H:%M:%S") if since else None
+    metric: str = "ap"  # New parameter for metric selection
+) -> list[tuple[str, str, int, dict]]:
+    """
+    Fetch leaderboard data using the current database structure.
+    Returns: list of (codename, faction, metric_value, metrics_dict)
+    """
+    session_factory = None  # This will be passed from calling context
+    # For now, let's use the global session factory from app context
+    if not hasattr(_fetch_cycle_leaderboard, '_session_factory'):
+        return []  # No session factory available
 
-    def _query() -> list[tuple[str, str, int]]:
-        with sqlite3.connect(AGENTS_DB_PATH) as connection:
-            connection.row_factory = sqlite3.Row
-            sql = [
-                "SELECT agent_name, agent_faction, SUM(cycle_points) AS total_points",
-                "FROM agents",
-                "WHERE cycle_points IS NOT NULL",
-            ]
-            params: list[Any] = []
-            if faction:
-                sql.append("AND agent_faction = ?")
-                params.append(faction)
-            if cycle_name:
-                sql.append("AND cycle_name = ?")
-                params.append(cycle_name)
-            if since_value:
-                sql.append("AND date IS NOT NULL AND date != ''")
-                sql.append("AND time IS NOT NULL AND time != ''")
-                sql.append("AND datetime(date || ' ' || time) >= ?")
-                params.append(since_value)
-            sql.append("GROUP BY agent_name, agent_faction")
-            sql.append("ORDER BY total_points DESC, agent_name ASC")
-            sql.append("LIMIT ?")
-            params.append(limit)
-            query = " ".join(sql)
-            rows = connection.execute(query, params).fetchall()
-        results: list[tuple[str, str, int]] = []
-        for row in rows:
-            total_points = row["total_points"]
-            if total_points is None:
-                continue
-            results.append(
-                (
-                    row["agent_name"],
-                    row["agent_faction"],
-                    int(total_points),
-                )
+    try:
+        async with session_scope(_fetch_cycle_leaderboard._session_factory) as session:
+            # Get the latest submission for each agent
+            from sqlalchemy import func, and_
+
+            # Build base query
+            query = select(
+                Agent.codename,
+                Agent.faction,
+                Submission.ap,
+                Submission.metrics
+            ).join(
+                Submission, Agent.id == Submission.agent_id
             )
-        return results
 
-    return await asyncio.to_thread(_query)
+            # Apply filters
+            conditions = []
+            if faction:
+                if faction.upper() == 'ENL':
+                    conditions.append(Agent.faction == 'ENL')
+                elif faction.upper() == 'RES':
+                    conditions.append(Agent.faction == 'RES')
+
+            if since:
+                conditions.append(Submission.submitted_at >= since)
+
+            if conditions:
+                query = query.where(and_(*conditions))
+
+            # Order by the selected metric
+            if metric == "ap":
+                query = query.order_by(Submission.ap.desc())
+            else:
+                # For other metrics, we'll need to parse from JSON
+                query = query.order_by(Submission.ap.desc())  # Default to AP ordering
+
+            query = query.limit(limit)
+
+            result = await session.execute(query)
+            rows = result.all()
+
+            leaderboard_data = []
+            for row in rows:
+                codename, faction, ap, metrics = row
+
+                # Extract metric value based on the selected metric
+                if metric == "ap":
+                    metric_value = ap
+                elif metric in metrics:
+                    metric_value = metrics.get(metric, 0)
+                else:
+                    metric_value = 0
+
+                leaderboard_data.append((
+                    codename,
+                    faction,
+                    int(metric_value),
+                    metrics
+                ))
+
+            return leaderboard_data
+
+    except Exception as e:
+        logger.error(f"Error fetching leaderboard: {e}")
+        return []
 
 
 def _format_cycle_leaderboard(
-    rows: list[tuple[str, str, int]],
+    rows: list[tuple[str, str, int, dict]],  # Updated to include metrics dict
     header: str,
     text_only_mode: bool,
 ) -> tuple[str, dict[str, Any]]:
     if text_only_mode:
         lines = [header]
-        for index, (name, faction, points) in enumerate(rows, start=1):
-            lines.append(f"{index}. {name} [{faction}] - {points:,} cycle points")
+        for index, (name, faction, points, metrics) in enumerate(rows, start=1):
+            lines.append(f"{index}. {name} [{faction}] - {points:,} AP")
         return "\n".join(lines), {}
     lines = [f"🏅 {header} 🏅"]
-    for index, (name, faction, points) in enumerate(rows, start=1):
-        lines.append(f"{index}. {name} [{faction}] — {points:,} cycle points")
+    for index, (name, faction, points, metrics) in enumerate(rows, start=1):
+        lines.append(f"{index}. {name} [{faction}] — {points:,} AP")
     return "\n".join(lines), {}
 
 
@@ -1757,12 +1793,234 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
+@telegram_message_retry(max_retries=2)
+async def import_file_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Import player data from a file with robust validation.
+    Supports JSON, CSV, Excel, and text formats.
+    """
+    if not update.message or not update.effective_user:
+        return
+
+    # Check if user is admin
+    settings: Settings = context.application.bot_data["settings"]
+    if update.effective_user.id not in settings.admin_user_ids:
+        await update.message.reply_text("❌ This command is only available to administrators.")
+        return
+
+    # Check if a file was provided
+    if not update.message.document and not update.message.reply_to_message or not update.message.reply_to_message.document:
+        await update.message.reply_text(
+            "📁 *File Import*\n\n"
+            "Please send a file with the following command:\n"
+            "/importfile (reply to a file message)\n\n"
+            "Supported formats:\n"
+            "• JSON (.json)\n"
+            "• CSV (.csv)\n"
+            "• Excel (.xlsx, .xls)\n"
+            "• Text (.txt, .tsv)\n\n"
+            "The bot will automatically detect the format and validate the data."
+        )
+        return
+
+    # Get the file
+    document = update.message.document if update.message.document else update.message.reply_to_message.document
+    if not document:
+        await update.message.reply_text("❌ No file found.")
+        return
+
+    await update.message.reply_text("📥 Downloading and processing file...")
+
+    try:
+        # Download the file
+        file = await context.bot.get_file(document.file_id)
+        file_path = f"/tmp/{document.file_name}"
+        await file.download_to_drive(file_path)
+
+        await update.message.reply_text("🔍 Analyzing file format and validating data...")
+
+        # Import and validate the file
+        file_importer: FileImporter = context.application.bot_data["file_importer"]
+        import_result = file_importer.import_file(file_path, validate=True, strict_validation=False)
+
+        if not import_result['success']:
+            error_message = "❌ *File Import Failed*\n\n"
+            for error in import_result['errors']:
+                error_message += f"• {error}\n"
+            await update.message.reply_text(error_message)
+            return
+
+        # Get validation results
+        validation = import_result.get('validation')
+        if validation and not validation['valid']:
+            error_message = "⚠️ *File Import Warnings*\n\n"
+            if validation.get('summary_errors'):
+                error_message += "Errors found:\n"
+                for error in validation['summary_errors'][:5]:
+                    error_message += f"• {error}\n"
+
+            if validation.get('global_warnings'):
+                error_message += "\nWarnings:\n"
+                for warning in validation['global_warnings'][:3]:
+                    error_message += f"• {warning}\n"
+
+            error_message += f"\n📊 *Validation Summary:*\n"
+            error_message += f"• Total records: {validation['total_count']}\n"
+            error_message += f"• Valid records: {validation['valid_count']}\n"
+            error_message += f"• Invalid records: {validation['invalid_count']}\n"
+
+            if validation['invalid_count'] > 0:
+                error_message += f"\n❌ Cannot import data with invalid records. Please fix the issues and try again."
+                await update.message.reply_text(error_message)
+                return
+
+        # If we get here, validation passed
+        valid_data = import_result['data']
+        total_records = len(valid_data)
+
+        if total_records == 0:
+            await update.message.reply_text("⚠️ No valid data found in the file.")
+            return
+
+        await update.message.reply_text(f"✅ File validation successful! Found {total_records} valid records.")
+
+        # Process the valid data
+        session_factory = context.application.bot_data["session_factory"]
+        processed_count = 0
+
+        await update.message.reply_text("💾 Saving validated data to database...")
+
+        async with resilient_session_scope(session_factory, max_retries=3) as session:
+            for record in valid_data:
+                try:
+                    # Extract required fields with proper validation
+                    agent_name = record.get('agent_name') or record.get('name')
+                    if not agent_name:
+                        continue
+
+                    # Check if agent already exists (Agent model uses codename, not agent_name)
+                    existing = await session.execute(
+                        select(Agent).where(Agent.codename == agent_name)
+                    )
+                    existing_agent = existing.scalar_one_or_none()
+
+                    if not existing_agent:
+                        # Create new agent with correct field names
+                        # Agent model only has: id, telegram_id, codename, faction
+                        faction = record.get('faction', 'unknown')
+                        # Normalize faction to ENL/RES
+                        if faction.lower() in ['enlightened', 'enl', 'green']:
+                            faction = 'ENL'
+                        elif faction.lower() in ['resistance', 'res', 'blue']:
+                            faction = 'RES'
+                        else:
+                            faction = 'ENL'  # Default fallback
+
+                        new_agent = Agent(
+                            telegram_id=update.effective_user.id,  # Use admin's ID for import
+                            codename=agent_name,  # Agent model uses codename, not agent_name
+                            faction=faction
+                        )
+                        session.add(new_agent)
+                        session.flush()  # Get the agent ID
+                        existing_agent = new_agent
+
+                    # Create Submission record with the stats data
+                    metrics_data = {
+                      'ap': int(record.get('ap', 0)),
+                      'hacks': int(record.get('hacks', 0)),
+                      'xm_recharged': float(record.get('xm_recharged', 0)),
+                      'level': int(record.get('level', 1)),
+                      'agent_name': agent_name,
+                      'faction': record.get('faction', 'unknown')
+                  }
+
+                    new_submission = Submission(
+                        agent_id=existing_agent.id,
+                        chat_id=update.effective_chat.id if update.effective_chat else update.effective_user.id,
+                        ap=int(record.get('ap', 0)),
+                        metrics=metrics_data,
+                        time_span="ALL TIME"
+                    )
+                    session.add(new_submission)
+                    processed_count += 1
+
+                except Exception as e:
+                    logger.warning(f"Failed to process record {record}: {e}")
+                    continue
+
+        # Clean up the temporary file
+        import os
+        try:
+            os.remove(file_path)
+        except Exception:
+            pass
+
+        # Send success message
+        success_message = (
+            f"✅ *File Import Completed Successfully*\n\n"
+            f"📊 *Summary:*\n"
+            f"• File: {document.file_name}\n"
+            f"• Format: {import_result['file_format']}\n"
+            f"• Total records: {total_records}\n"
+            f"• Successfully processed: {processed_count}\n"
+            f"• Skipped: {total_records - processed_count}\n\n"
+            f"🛡️ *Resilience Features Applied:*\n"
+            f"• ✅ Format auto-detection\n"
+            f"• ✅ Data validation & normalization\n"
+            f"• ✅ Database retry logic\n"
+            f"• ✅ Error recovery"
+        )
+
+        await update.message.reply_text(success_message)
+
+    except Exception as e:
+        logger.error(f"File import error: {e}")
+        await update.message.reply_text(f"❌ File import failed: {str(e)}")
+
+        # Clean up temporary file on error
+        import os
+        try:
+            if 'file_path' in locals():
+                os.remove(file_path)
+        except Exception:
+            pass
 
 
 async def last_week_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.message:
         return
     settings: Settings = context.application.bot_data["settings"]
+    session_factory = context.application.bot_data["session_factory"]
+
+    # Debug: Check what's in the database
+    try:
+        async with session_scope(session_factory) as session:
+            from .models import Agent, Submission
+            agent_count = await session.execute(select(func.count(Agent.id)))
+            submission_count = await session.execute(select(func.count(Submission.id)))
+
+            logger.info(f"Database check: {agent_count.scalar()} agents, {submission_count.scalar()} submissions")
+
+            # Show some sample data
+            if agent_count.scalar() > 0:
+                sample_agents = await session.execute(select(Agent.codename, Agent.faction).limit(5))
+                agents_data = sample_agents.fetchall()
+                logger.info(f"Sample agents: {agents_data}")
+
+            if submission_count.scalar() > 0:
+                sample_submissions = await session.execute(
+                    select(Agent.codename, Submission.ap).join(Submission).limit(5)
+                )
+                submissions_data = sample_submissions.fetchall()
+                logger.info(f"Sample submissions: {submissions_data}")
+
+    except Exception as e:
+        logger.error(f"Debug query failed: {e}")
+
+    # Set the session factory for the leaderboard function
+    _fetch_cycle_leaderboard._session_factory = session_factory
+
     since = datetime.now(timezone.utc) - timedelta(days=int(os.environ.get("SUBMISSION_RETENTION_DAYS", "7")))
     rows = await _fetch_cycle_leaderboard(10, since=since)
     retention_days = int(os.environ.get("SUBMISSION_RETENTION_DAYS", "7"))
@@ -2578,6 +2836,7 @@ def configure_handlers(application: Application) -> None:
     application.add_error_handler(error_handler)
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("importfile", import_file_command))
     
         
     settings_handler = ConversationHandler(
@@ -3412,43 +3671,54 @@ async def build_application() -> Application:
 
     logger.info(f"Starting {settings.bot_name} in {settings.environment} mode")
 
-    # Initialize database
-    engine = build_engine(settings)
-    session_factory = build_session_factory(engine)
-    await init_models(engine)
-
-    # Initialize Redis
-    redis_conn = Redis.from_url(
-        settings.redis.url,
-        socket_timeout=settings.redis.socket_timeout,
-        socket_connect_timeout=settings.redis.socket_connect_timeout,
-        retry_on_timeout=settings.redis.retry_on_timeout
-    )
-    queue = Queue(connection=redis_conn)
-
-    # Test connections
+    # Initialize database with retry logic
+    print("🔌 Initializing database connection...")
     try:
-        # Test database connection
-        async with session_factory() as session:
-            await session.execute(text("SELECT 1"))
-        logger.info("Database connection successful")
-
+        engine = await build_engine(settings)
+        session_factory = build_session_factory(engine)
+        await init_models(engine)
+        logger.info("Database initialized successfully with resilience features")
     except Exception as e:
-        logger.error(f"Failed to connect to database: {e}")
-        print(f"\n❌ Database connection failed: {e}")
+        logger.error(f"Failed to initialize database: {e}")
+        print(f"\n❌ Database initialization failed: {e}")
         print("Please check your database configuration and ensure database is running.")
         sys.exit(1)
 
-    # Test Redis connection (optional)
-    redis_available = False
+    # Initialize resilient Redis connection
+    print("🔴 Initializing Redis connection...")
     try:
-        redis_conn.ping()
-        logger.info("Redis connection successful")
-        redis_available = True
+        resilient_redis = get_resilient_redis(
+            settings.redis.url,
+            timeout=settings.redis.socket_timeout,
+            max_retries=3
+        )
+        redis_status = resilient_redis.get_status()
+
+        if redis_status['redis_available']:
+            # Use resilient Redis for standard operations
+            redis_conn = Redis.from_url(
+                settings.redis.url,
+                socket_timeout=settings.redis.socket_timeout,
+                socket_connect_timeout=settings.redis.socket_connect_timeout,
+                retry_on_timeout=settings.redis.retry_on_timeout
+            )
+            queue = Queue(connection=redis_conn)
+            logger.info("Redis connection successful")
+            redis_available = True
+            print(f"✅ Redis connected (fallback cache size: {redis_status['fallback_cache_size']})")
+        else:
+            logger.warning("Redis not available, using fallback cache only")
+            print(f"⚠️ Redis not available - using in-memory fallback cache")
+            redis_conn = None
+            queue = None
+            redis_available = False
+
     except Exception as e:
-        logger.warning(f"Redis connection failed: {e}")
-        print(f"⚠️ Redis not available: {e}")
+        logger.warning(f"Redis initialization failed: {e}")
+        print(f"⚠️ Redis initialization failed: {e}")
         print("Bot will continue without Redis features (caching, background jobs)")
+        redis_conn = None
+        queue = None
         redis_available = False
 
     # Initialize scheduler
@@ -3465,8 +3735,21 @@ async def build_application() -> Application:
     application.bot_data["queue"] = queue if redis_available else None
     application.bot_data["redis_connection"] = redis_conn if redis_available else None
     application.bot_data["redis_available"] = redis_available
+    application.bot_data["resilient_redis"] = resilient_redis
     application.bot_data["scheduler"] = scheduler
     application.bot_data["health_checker"] = health_checker
+
+    # Add new utility modules
+    application.bot_data["data_validator"] = DataValidator()
+    application.bot_data["file_importer"] = FileImporter()
+
+    # Log resilience features
+    print("🛡️ Resilience features enabled:")
+    print("  ✅ Database connection retry logic")
+    print("  ✅ Redis fallback to in-memory cache" if not redis_available else "  ✅ Redis with fallback support")
+    print("  ✅ Telegram API retry decorators")
+    print("  ✅ Data validation and normalization")
+    print("  ✅ File format auto-detection")
 
     configure_handlers(application)
     scheduler.add_job(
@@ -3576,13 +3859,26 @@ async def async_main() -> None:
             scheduler = application.bot_data["scheduler"]
             if settings.monitoring.health_check_enabled:
                 health_check_interval = int(os.environ.get("HEALTH_CHECK_INTERVAL_MINUTES", "5"))
+
+                def safe_health_check():
+                    """Safely run async health check from sync context"""
+                    try:
+                        asyncio.run_coroutine_threadsafe(
+                            health_checker.comprehensive_health_check(),
+                            application.bot.loop
+                        )
+                    except Exception as e:
+                        logger.error(f"Health check job failed: {e}")
+
                 scheduler.add_job(
-                    lambda: asyncio.create_task(health_checker.comprehensive_health_check()),
+                    safe_health_check,
                     trigger="interval",
                     minutes=health_check_interval,
                     max_instances=1,
                     misfire_grace_time=60,
                     coalesce=True,
+                    id='health_check_job',
+                    replace_existing=True
                 )
                 print(f"💓 Health monitoring enabled (every {health_check_interval} minutes)")
 

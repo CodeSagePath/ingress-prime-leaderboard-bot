@@ -48,11 +48,11 @@ def start_dashboard_process():
 
         def run_dashboard():
             from bot.dashboard import create_dashboard_app
-            from bot.database import build_engine, init_models
+            from bot.database import build_engine_sync, init_models
             import asyncio
             import uvicorn
 
-            engine = build_engine(settings)
+            engine = build_engine_sync(settings)
 
             # Create a new event loop for this process
             loop = asyncio.new_event_loop()
@@ -165,7 +165,7 @@ async def start_dashboard_server(settings):
         from bot.dashboard import create_dashboard_app
         from bot.database import build_engine, build_session_factory, init_models
 
-        engine = build_engine(settings)
+        engine = await build_engine(settings)
         await init_models(engine)
         session_factory = build_session_factory(engine)
         dashboard_app = create_dashboard_app(settings, session_factory)
