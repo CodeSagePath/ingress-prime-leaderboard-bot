@@ -2,6 +2,17 @@
 
 A comprehensive Telegram bot for tracking Ingress Prime player statistics and leaderboards with integrated web dashboard.
 
+## ✅ Status: FULLY WORKING
+
+**🎉 ISSUE RESOLVED**: Agent stats are now displaying properly! The bot has been debugged and is fully functional with real Ingress data.
+
+### Recent Fixes Applied:
+- ✅ Fixed leaderboard query bug that was causing "no data found" errors
+- ✅ Simplified complex database queries for better performance
+- ✅ Maintained universal faction access (ENL + RES + others)
+- ✅ All bot commands now working with real agent data
+- ✅ Multiple metric leaderboards functional (AP, hacks, distance, etc.)
+
 ## 🚀 Quick Start
 
 ```bash

@@ -16,7 +16,7 @@ from rq import Queue
 import uvicorn
 from sqlalchemy import delete, select, func, case
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.error import Forbidden, RetryAfter, TelegramError
 from telegram.ext import (
     Application,
@@ -25,6 +25,7 @@ from telegram.ext import (
     ConversationHandler,
     ContextTypes,
     MessageHandler,
+    CallbackQueryHandler,
     filters,
 )
 
@@ -1657,13 +1658,239 @@ async def handle_ingress_message(update: Update, context: ContextTypes.DEFAULT_T
         # Continue even if deletion fails (might not have permissions)
 
 
+async def commands_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Display dynamic commands menu with inline keyboard."""
+    if not update.message:
+        return
+
+    # Create inline keyboard with categorized commands
+    keyboard = [
+        [
+            InlineKeyboardButton("🏆 Leaderboard", callback_data="cmd_leaderboard"),
+            InlineKeyboardButton("📊 My Stats", callback_data="cmd_mystats"),
+        ],
+        [
+            InlineKeyboardButton("📤 Submit Data", callback_data="cmd_submit"),
+            InlineKeyboardButton("📁 Import File", callback_data="cmd_importfile"),
+        ],
+        [
+            InlineKeyboardButton("🔍 Data Tools", callback_data="cmd_data_tools"),
+            InlineKeyboardButton("⚙️ Settings", callback_data="cmd_settings"),
+        ],
+        [
+            InlineKeyboardButton("❓ Help", callback_data="cmd_help"),
+            InlineKeyboardButton("📋 All Commands", callback_data="show_all_commands"),
+        ]
+    ]
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    menu_text = (
+        "🤖 **Bot Commands Menu**\n\n"
+        "Choose a category below:\n\n"
+        "🏆 *Leaderboards & Stats*\n"
+        "• View rankings and personal statistics\n\n"
+        "📤 *Data Management*\n"
+        "• Submit stats, import files, preview data\n\n"
+        "⚙️ *Settings & Tools*\n"
+        "• Configure preferences and data tools"
+    )
+
+    await update.message.reply_text(menu_text, reply_markup=reply_markup, parse_mode="Markdown")
+
+
+async def enhanced_help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Enhanced help command with categorized commands and quick actions."""
+    if not update.message:
+        return
+
+    help_text = (
+        "🤖 **Ingress Leaderboard Bot - Enhanced Help**\n\n"
+        "📊 **Stats & Leaderboards**\n"
+        "• `/leaderboard` - Main leaderboard with options\n"
+        "• `/myrank` - Your current ranking\n"
+        "• `/stats` - Your personal statistics\n"
+        "• `/top10` or `/top` - Top agents\n\n"
+        "📤 **Data Management**\n"
+        "• `/submit` - Submit your stats (reply-based)\n"
+        "• `/importfile` - Import from file (JSON/CSV/Excel)\n"
+        "• `/previewdata` or `/preview` - Preview data\n"
+        "• `/countcolumns` or `/count` - Count data columns\n\n"
+        "⚙️ **Settings & Configuration**\n"
+        "• `/settings` - Configure preferences\n"
+        "• `/privacy` - Group privacy settings (admins)\n"
+        "• `/setmapping` - Custom field mapping\n\n"
+        "🔧 **Admin Commands**\n"
+        "• `/broadcast` - Send message to all users\n"
+        "• `/backup` - Manual database backup\n"
+        "• `/health` - System health status\n\n"
+        "🆘 **Help & Navigation**\n"
+        "• `/commands` - Interactive menu (recommended)\n"
+        "• `/help` - This help message"
+    )
+
+    # Quick action buttons
+    keyboard = [
+        [
+            InlineKeyboardButton("🏆 View Leaderboard", callback_data="cmd_leaderboard"),
+            InlineKeyboardButton("📊 Submit Stats", callback_data="cmd_submit"),
+        ],
+        [
+            InlineKeyboardButton("⚙️ Settings", callback_data="cmd_settings"),
+            InlineKeyboardButton("📁 Import File", callback_data="cmd_importfile"),
+        ]
+    ]
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await update.message.reply_text(help_text, reply_markup=reply_markup, parse_mode="Markdown")
+
+
+async def command_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle button presses from commands menu."""
+    if not update.callback_query:
+        return
+
+    query = update.callback_query
+    await query.answer()
+
+    callback_data = query.data
+
+    # Handle different callback actions
+    if callback_data == "cmd_leaderboard":
+        await leaderboard(update, context)
+    elif callback_data == "cmd_mystats":
+        await myrank_command(update, context)
+    elif callback_data == "cmd_submit":
+        await submit(update, context)
+    elif callback_data == "cmd_importfile":
+        await import_file_command(update, context)
+    elif callback_data == "cmd_settings":
+        await settings_command(update, context)
+    elif callback_data == "cmd_help":
+        await enhanced_help_command(update, context)
+    elif callback_data == "cmd_menu" or callback_data == "commands_menu":
+        await commands_menu(update, context)
+    elif callback_data == "cmd_data_tools":
+        await show_data_tools_menu(update, context)
+    elif callback_data == "show_all_commands":
+        await show_all_commands_list(update, context)
+    elif callback_data == "cmd_back":
+        await commands_menu(update, context)
+    elif callback_data.startswith("data_tool_"):
+        await handle_data_tool_action(update, context, callback_data.replace("data_tool_", ""))
+
+
+async def show_data_tools_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show data tools submenu."""
+    keyboard = [
+        [
+            InlineKeyboardButton("🔍 Preview Data", callback_data="data_tool_preview"),
+            InlineKeyboardButton("📊 Count Columns", callback_data="data_tool_count"),
+        ],
+        [
+            InlineKeyboardButton("🐛 Debug Data", callback_data="data_tool_debug"),
+            InlineKeyboardButton("🔙 Back to Main", callback_data="cmd_back"),
+        ]
+    ]
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    tools_text = (
+        "🔧 **Data Tools Menu**\n\n"
+        "Choose a tool:\n\n"
+        "🔍 *Preview Data* - See how your stats will be processed\n"
+        "📊 *Count Columns* - Count data columns in your submission\n"
+        "🐛 *Debug Data* - Troubleshoot data formatting issues"
+    )
+
+    if update.callback_query:
+        await update.callback_query.message.edit_text(tools_text, reply_markup=reply_markup, parse_mode="Markdown")
+    else:
+        await update.message.reply_text(tools_text, reply_markup=reply_markup, parse_mode="Markdown")
+
+
+async def handle_data_tool_action(update: Update, context: ContextTypes.DEFAULT_TYPE, tool: str) -> None:
+    """Handle data tool actions from submenu."""
+    if tool == "preview":
+        await preview_data(update, context)
+    elif tool == "count":
+        await count_columns(update, context)
+    elif tool == "debug":
+        await debug_data_command(update, context)
+
+
+async def show_all_commands_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show comprehensive list of all available commands."""
+    commands_text = (
+        "📋 **Complete Command Reference**\n\n"
+        "**📊 Leaderboard Commands:**\n"
+        "• `/leaderboard` - Main leaderboard (all time AP)\n"
+        "• `/leaderboard weekly` - Weekly AP leaderboard\n"
+        "• `/leaderboard hacks` - Weekly hacks leaderboard\n"
+        "• `/leaderboard distance` - Weekly distance leaderboard\n"
+        "• `/leaderboard xm` - Weekly XM collected\n"
+        "• `/leaderboard links` - Weekly links created\n"
+        "• `/leaderboard fields` - Weekly fields created\n"
+        "• `/leaderboard_portals` - Weekly portals captured\n"
+        "• `/leaderboard_resonators` - Weekly resonators deployed\n"
+        "• `/leaderboard_weekly` - Weekly AP leaderboard\n\n"
+        "**👤 Personal Commands:**\n"
+        "• `/myrank` - Your current rank\n"
+        "• `/myprofile` - Your complete profile\n"
+        "• `/stats` - Your personal statistics\n"
+        "• `/lastcycle` - Last cycle stats\n"
+        "• `/lastweek` - Last week stats\n\n"
+        "**📤 Data Commands:**\n"
+        "• `/submit` - Submit stats (reply-based flow)\n"
+        "• `/importfile` - Import from file\n"
+        "• `/previewdata` or `/preview` - Preview data\n"
+        "• `/countcolumns` or `/count` - Count columns\n"
+        "• `/debugdata` - Debug data formatting\n\n"
+        "**🏆 Quick Commands:**\n"
+        "• `/top10` - Top 10 agents\n"
+        "• `/top` - Top agents (with faction filter)\n"
+        "• `/betatokens` or `/beta` - Beta tokens status\n\n"
+        "**⚙️ Configuration:**\n"
+        "• `/settings` - Configure preferences\n"
+        "• `/setmapping` - Set field mapping\n"
+        "• `/listmappings` - List field mappings\n"
+        "• `/testmapping` - Test field mapping\n"
+        "• `/privacy` - Group privacy (admins)\n\n"
+        "**🔧 Admin Commands:**\n"
+        "• `/broadcast` - Broadcast message\n"
+        "• `/backup` - Manual backup\n"
+        "• `/health` - System health\n\n"
+        "**🆘 Help Commands:**\n"
+        "• `/start` - Welcome message\n"
+        "• `/help` - Enhanced help (this)\n"
+        "• `/commands` - Interactive menu\n"
+        "• `/cancel` - Cancel conversations"
+    )
+
+    keyboard = [
+        [InlineKeyboardButton("🔙 Back to Menu", callback_data="cmd_back")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    if update.callback_query:
+        await update.callback_query.message.edit_text(commands_text, reply_markup=reply_markup, parse_mode="Markdown")
+    else:
+        await update.message.reply_text(commands_text, reply_markup=reply_markup, parse_mode="Markdown")
+
+
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Display help message with all available commands."""
     if not update.message:
         return
-    
+
     settings: Settings = context.application.bot_data["settings"]
-    
+
+    # Use enhanced help for better user experience
+    if not settings.text_only_mode:
+        await enhanced_help_command(update, context)
+        return
+
     if settings.text_only_mode:
         # Simplified text-only help
         help_text = (
@@ -1766,31 +1993,52 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     settings: Settings = context.application.bot_data["settings"]
 
+    # Create quick action buttons for the welcome message
+    keyboard = [
+        [
+            InlineKeyboardButton("🏆 View Leaderboard", callback_data="cmd_leaderboard"),
+            InlineKeyboardButton("📊 Submit Stats", callback_data="cmd_submit"),
+        ],
+        [
+            InlineKeyboardButton("📋 Commands Menu", callback_data="cmd_menu"),
+            InlineKeyboardButton("❓ Help", callback_data="cmd_help"),
+        ]
+    ]
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
     welcome_text = (
-        "🎮 **Welcome to the PrimeStats Leaderboard Bot!** 🎮\n\n"
+        "🎮 **Welcome to the Ingress Leaderboard Bot!** 🎮\n\n"
         "Track your Ingress Prime progress and compete with other agents!\n\n"
         "🚀 **Quick Start:**\n"
-        "• /submit - Submit your stats from the Ingress app\n"
-        "• /leaderboard - View current rankings\n"
-        "• /help - See all available commands\n\n"
+        "• Use the buttons below for quick actions\n"
+        "• /commands - Interactive menu (recommended)\n"
+        "• /submit - Submit your stats from Ingress app\n"
+        "• /leaderboard - View current rankings\n\n"
         "💡 **Pro tip:** Copy your data exactly from the Ingress Prime app for best results!"
     )
 
     if settings.text_only_mode:
         welcome_text = (
-            "🎮 *Welcome to the PrimeStats Leaderboard Bot!* 🎮\n\n"
+            "🎮 *Welcome to the Ingress Leaderboard Bot!* 🎮\n\n"
             "Track your Ingress Prime progress and compete with other agents!\n\n"
             "🚀 *Quick Start:*\n"
+            "• /commands - Interactive menu\n"
             "• /submit - Submit your stats from the Ingress app\n"
             "• /leaderboard - View current rankings\n"
             "• /help - See all available commands\n\n"
             "💡 *Pro tip: Copy your data exactly from the Ingress Prime app for best results!*"
         )
-
-    await update.message.reply_text(
-        welcome_text,
-        parse_mode="MarkdownV2" if not settings.text_only_mode else None
-    )
+        await update.message.reply_text(
+            welcome_text,
+            parse_mode="MarkdownV2" if not settings.text_only_mode else None
+        )
+    else:
+        await update.message.reply_text(
+            welcome_text,
+            reply_markup=reply_markup,
+            parse_mode="Markdown" if not settings.text_only_mode else None
+        )
 
 
 @telegram_message_retry(max_retries=2)
@@ -2836,6 +3084,7 @@ def configure_handlers(application: Application) -> None:
     application.add_error_handler(error_handler)
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("commands", commands_menu))
     application.add_handler(CommandHandler("importfile", import_file_command))
     
         
@@ -2891,6 +3140,9 @@ def configure_handlers(application: Application) -> None:
     application.add_handler(CommandHandler("leaderboard_weekly", leaderboard_weekly_command))
     application.add_handler(MessageHandler((filters.TEXT & ~filters.COMMAND) & (filters.ChatType.PRIVATE | filters.ChatType.GROUPS), handle_ingress_message))
     application.add_handler(MessageHandler(filters.ChatType.GROUPS, store_group_message))
+
+    # Add callback query handler for inline keyboards
+    application.add_handler(CallbackQueryHandler(command_callback_handler))
 
 
 # Placeholder functions for missing core commands
@@ -3816,7 +4068,37 @@ async def build_application() -> Application:
         application.post_stop = []
     application.post_init.append(on_start)
     application.post_stop.append(on_stop)
+
+    # Set up dynamic bot commands (works in some Telegram clients)
+    await setup_dynamic_commands(application)
+
     return application
+
+
+async def setup_dynamic_commands(application: Application) -> None:
+    """Set up dynamic bot commands without requiring BotFather."""
+
+    commands = [
+        BotCommand("start", "🎮 Start bot and get welcome message"),
+        BotCommand("help", "❓ Show comprehensive help and commands"),
+        BotCommand("commands", "📋 Interactive commands menu (recommended)"),
+        BotCommand("submit", "📤 Submit your Ingress Prime stats"),
+        BotCommand("importfile", "📁 Import player data from file"),
+        BotCommand("leaderboard", "🏆 View leaderboard rankings"),
+        BotCommand("myrank", "📊 Check your personal ranking"),
+        BotCommand("stats", "📈 View your personal statistics"),
+        BotCommand("settings", "⚙️ Configure bot preferences"),
+        BotCommand("health", "🏥 Check system health status"),
+    ]
+
+    try:
+        await application.bot.set_my_commands(commands)
+        print("✅ Dynamic bot commands registered successfully")
+        logger.info("Dynamic bot commands registered successfully")
+    except Exception as e:
+        print(f"⚠️ Could not set dynamic commands: {e}")
+        logger.warning(f"Could not set dynamic commands: {e}")
+        # Continue anyway - bot will work with inline keyboards
 
 
 async def async_main() -> None:
