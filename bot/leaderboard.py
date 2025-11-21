@@ -264,21 +264,9 @@ async def _get_ap_leaderboard(
     chat_id: int | None,
     time_span: str | None
 ) -> Sequence[tuple[str, str, int, Dict[str, Any]]]:
-    """Get AP-based leaderboard (original logic)."""
+    """Get AP-based leaderboard (fixed logic)."""
 
-    # Get latest submission per agent
-    latest_submissions = (
-        select(
-            Agent.codename,
-            Agent.faction,
-            func.max(Submission.submitted_at).label("latest_submission")
-        )
-        .join(Submission, Submission.agent_id == Agent.id)
-        .group_by(Agent.id, Agent.codename, Agent.faction)
-        .subquery()
-    )
-
-    # Main query
+    # Simple, working query that gets latest submission per agent
     stmt = (
         select(
             Agent.codename,
@@ -288,7 +276,6 @@ async def _get_ap_leaderboard(
             func.max(Submission.metrics).label("all_metrics")
         )
         .join(Submission, Submission.agent_id == Agent.id)
-        .join(latest_submissions, latest_submissions.c.latest_submission == Submission.submitted_at)
         .group_by(Agent.id, Agent.codename, Agent.faction)
         .order_by(func.max(Submission.ap).desc(), Agent.codename)
         .limit(limit)
@@ -330,57 +317,62 @@ async def _get_metric_leaderboard(
     time_span: str | None,
     config: Dict[str, Any]
 ) -> Sequence[tuple[str, str, int, Dict[str, Any]]]:
-    """Get leaderboard for specific JSON metric."""
+    """Get leaderboard for specific JSON metric (fixed logic)."""
 
     json_key = config["json_key"]
 
-    # Build raw SQL query for JSON extraction (more reliable for SQLite)
-    sql_query = f"""
-        SELECT
-            a.codename,
-            a.faction,
-            CAST(s.ap AS INTEGER) as ap,
-            COALESCE(CAST(json_extract(s.metrics, '$.{json_key}') AS INTEGER), 0) as metric_value,
-            s.submitted_at,
-            s.metrics
-        FROM agents a
-        JOIN submissions s ON s.agent_id = a.id
-        WHERE s.submitted_at = (
-                SELECT MAX(s2.submitted_at)
-                FROM submissions s2
-                WHERE s2.agent_id = a.id
-                {f"AND s2.chat_id = {chat_id}" if chat_id else ""}
-                {f"AND s2.time_span = '{time_span}'" if time_span else ""}
-            )
-            {f"AND s.chat_id = {chat_id}" if chat_id else ""}
-            {f"AND s.time_span = '{time_span}'" if time_span else ""}
-        ORDER BY COALESCE(CAST(json_extract(s.metrics, '$.{json_key}') AS INTEGER), 0) DESC, a.codename
-        LIMIT {limit}
-    """
+    # Get latest submissions for all agents with their JSON metrics
+    stmt = (
+        select(
+            Agent.codename,
+            Agent.faction,
+            func.max(Submission.ap).label("ap_value"),  # Keep AP for reference
+            func.max(Submission.submitted_at).label("last_seen"),
+            func.max(Submission.metrics).label("all_metrics")
+        )
+        .join(Submission, Submission.agent_id == Agent.id)
+        .group_by(Agent.id, Agent.codename, Agent.faction)
+        .order_by(Agent.codename)  # Will sort later after extracting metrics
+        .limit(limit * 2)  # Get more to filter out those without the metric
+    )
 
-    result = await session.execute(text(sql_query))
+    # Apply chat filter only if chat_id is provided
+    if chat_id is not None:
+        stmt = stmt.where(Submission.chat_id == chat_id)
+
+    # Apply time span filter only if provided
+    if time_span is not None:
+        stmt = stmt.where(Submission.time_span == time_span)
+
+    result = await session.execute(stmt)
     rows = result.fetchall()
 
     processed_results = []
+
     for row in rows:
-        codename, faction, ap, metric_value, submitted_at, metrics_json = row
+        codename, faction, ap_value, last_seen, all_metrics = row
 
-        # Skip agents with no data at all for this metric
-        if metric_value == 0 and ap == 0:
-            continue
+        # Extract the specific metric from JSON
+        if all_metrics and json_key in all_metrics:
+            metric_value = all_metrics[json_key]
 
-        # Build complete metrics dictionary
-        metrics_dict = {
-            "ap": int(ap) if ap else 0,
-            "last_seen": submitted_at.isoformat() if submitted_at else None,
-        }
+            # Build complete metrics dictionary
+            metrics_dict = {
+                "ap": int(ap_value) if ap_value else 0,
+                "last_seen": last_seen.isoformat() if last_seen else None,
+                json_key: int(metric_value) if isinstance(metric_value, (int, float)) else metric_value
+            }
 
-        # Add all available JSON metrics
-        if metrics_json:
-            for key, value in metrics_json.items():
-                if isinstance(value, (int, float)):
-                    metrics_dict[key] = int(value)
+            # Add other available JSON metrics
+            if all_metrics:
+                for key, value in all_metrics.items():
+                    if isinstance(value, (int, float)):
+                        metrics_dict[key] = int(value)
 
-        processed_results.append((codename, faction, int(metric_value) if metric_value else 0, metrics_dict))
+            processed_results.append((codename, faction, int(metric_value) if isinstance(metric_value, (int, float)) else 0, metrics_dict))
+
+    # Sort by metric value
+    processed_results.sort(key=lambda x: x[2], reverse=True)
+    processed_results = processed_results[:limit]
 
     return processed_results
