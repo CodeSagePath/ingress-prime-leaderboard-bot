@@ -201,8 +201,7 @@ async def save_submission_to_main_db(session, entry: dict, message) -> None:
         agent = Agent(
             telegram_id=telegram_id,
             codename=agent_name,
-            faction=faction,
-            created_at=datetime.now(timezone.utc)
+            faction=faction
         )
         session.add(agent)
         await session.flush()

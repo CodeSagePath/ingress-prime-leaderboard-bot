@@ -1,0 +1,140 @@
+{
+  "commands": [
+    {
+      "command": "start",
+      "description": "🎮 Start bot and get welcome message",
+      "category": "basic",
+      "emoji": "🎮",
+      "enabled": true
+    },
+    {
+      "command": "help",
+      "description": "❓ Show comprehensive help and commands",
+      "category": "basic",
+      "emoji": "❓",
+      "enabled": true
+    },
+    {
+      "command": "commands",
+      "description": "📋 Interactive commands menu (recommended)",
+      "category": "basic",
+      "emoji": "📋",
+      "enabled": true
+    },
+    {
+      "command": "submit",
+      "description": "📤 Submit your Ingress Prime stats",
+      "category": "data",
+      "emoji": "📤",
+      "enabled": true
+    },
+    {
+      "command": "importfile",
+      "description": "📁 Import player data from file",
+      "category": "data",
+      "emoji": "📁",
+      "enabled": true
+    },
+    {
+      "command": "leaderboard",
+      "description": "🏆 View leaderboard rankings",
+      "category": "stats",
+      "emoji": "🏆",
+      "enabled": true
+    },
+    {
+      "command": "myrank",
+      "description": "📊 Check your personal ranking",
+      "category": "stats",
+      "emoji": "📊",
+      "enabled": true
+    },
+    {
+      "command": "stats",
+      "description": "📈 View your personal statistics",
+      "category": "stats",
+      "emoji": "📈",
+      "enabled": true
+    },
+    {
+      "command": "settings",
+      "description": "⚙️ Configure bot preferences",
+      "category": "config",
+      "emoji": "⚙️",
+      "enabled": true
+    },
+    {
+      "command": "health",
+      "description": "🏥 Check system health status",
+      "category": "admin",
+      "emoji": "🏥",
+      "enabled": true
+    },
+    {
+      "command": "tournament",
+      "description": "View tournament standings",
+      "category": "basic",
+      "emoji": "🔹",
+      "enabled": true
+    }
+  ],
+  "menu_layout": {
+    "main": [
+      [
+        "leaderboard",
+        "myrank"
+      ],
+      [
+        "submit",
+        "importfile"
+      ],
+      [
+        "data_tools",
+        "settings"
+      ],
+      [
+        "help",
+        "all_commands"
+      ]
+    ],
+    "data_tools": [
+      [
+        "preview",
+        "count"
+      ],
+      [
+        "debug",
+        "back"
+      ]
+    ]
+  },
+  "categories": {
+    "basic": {
+      "name": "Basic Commands",
+      "emoji": "🔰",
+      "description": "Essential bot commands"
+    },
+    "data": {
+      "name": "Data Management",
+      "emoji": "📊",
+      "description": "Submit and manage your stats"
+    },
+    "stats": {
+      "name": "Statistics",
+      "emoji": "📈",
+      "description": "View leaderboards and personal stats"
+    },
+    "config": {
+      "name": "Configuration",
+      "emoji": "⚙️",
+      "description": "Configure bot settings"
+    },
+    "admin": {
+      "name": "Admin Commands",
+      "emoji": "🔧",
+      "description": "Administrative functions"
+    }
+  },
+  "last_updated": "2025-11-21T15:30:18.671116",
+  "version": "1.0.0"
+}
